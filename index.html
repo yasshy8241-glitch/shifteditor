@@ -1,561 +1,693 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import {
-  Calendar, Users, Sparkles, Download, Copy, AlertTriangle, Moon, Sun,
-  Plus, Trash2, ChevronLeft, ChevronRight, FileSpreadsheet, CheckCircle2,
-  ArrowUp, ArrowDown, UserCheck, History, Save, Edit3, Check, Settings, AlertCircle,
-  X, Info, RefreshCw, FileText, Brain, ShieldCheck, Upload, Send
-} from 'lucide-react';
-
-// ==========================================
-// 定数・シフト定義
-// ==========================================
-
-const SHIFT_TYPES = {
-  EARLY: { id: 'EARLY', label: '早番', time: '9:00-18:00', short: '早', bg: 'bg-pink-100 dark:bg-pink-950/70', text: 'text-pink-700 dark:text-pink-300', border: 'border-pink-300 dark:border-pink-800' },
-  MIDDLE: { id: 'MIDDLE', label: '中番', time: '11:00-20:00', short: '中', bg: 'bg-amber-100 dark:bg-amber-950/70', text: 'text-amber-700 dark:text-amber-300', border: 'border-amber-300 dark:border-amber-800' },
-  LATE: { id: 'LATE', label: '遅番', time: '13:00-22:00', short: '遅', bg: 'bg-blue-100 dark:bg-blue-950/70', text: 'text-blue-700 dark:text-blue-300', border: 'border-blue-300 dark:border-blue-800' },
-  TRAINING: { id: 'TRAINING', label: '研修', time: '社内研修', short: '研', bg: 'bg-emerald-100 dark:bg-emerald-950/70', text: 'text-emerald-700 dark:text-emerald-300', border: 'border-emerald-300 dark:border-emerald-800' },
-  REWARD: { id: 'REWARD', label: '報奨', time: '特別勤務', short: '報', bg: 'bg-purple-100 dark:bg-purple-950/70', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-300 dark:border-purple-800' },
-  OFF: { id: 'OFF', label: '休み', time: '休日', short: '休', bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-500 dark:text-slate-400', border: 'border-slate-200 dark:border-slate-700' },
-};
-
-const INITIAL_MEMBERS = [
-  { id: 'm1', name: '佐藤 店長' },
-  { id: 'm2', name: '田中 さん' },
-  { id: 'm3', name: '鈴木 さん' },
-  { id: 'm4', name: '高橋 さん' },
-];
-
-const WEEKDAYS_MON_START = ['月', '火', '水', '木', '金', '土', '日'];
-const API_KEY = ""; 
-
-async function callGeminiApi(payload, retries = 5, delay = 1000) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }
-      );
-      if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-      return await response.json();
-    } catch (e) {
-      if (i === retries - 1) throw e;
-      await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
-    }
-  }
-}
-
-// テキスト内のアスタリスクやハッシュなどの記号を除去・整理する関数
-const cleanAiText = (text) => {
-  if (!text) return '';
-  return text
-    .replace(/[\*#_~`]/g, '') // * # _ ~ ` などの記号を削除
-    .replace(/^\s*[-+]\s+/gm, '・ ') // 記号による箇条書きを「・」に統一
-    .replace(/\n{3,}/g, '\n\n') // 無駄な多重改行を整理
-    .trim();
-};
-
-export default function App() {
-  const [darkMode, setDarkMode] = useState(false);
-  const [activeTab, setActiveTab] = useState('matrix'); // 'matrix' | 'wishes' | 'warnings' | 'ai' | 'members'
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Shift AI Pro - スマートシフト管理</title>
   
-  const today = new Date();
-  const nextMonthDate = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-  const [year, setYear] = useState(nextMonthDate.getFullYear());
-  const [month, setMonth] = useState(nextMonthDate.getMonth() + 1);
-  
-  const currentKey = `${year}-${String(month).padStart(2, '0')}`;
-
-  const [members, setMembers] = useState(INITIAL_MEMBERS);
-  const [requiredWorkDays, setRequiredWorkDays] = useState(20);
-
-  const [allMonthlyData, setAllMonthlyData] = useState({});
-
-  const currentShifts = allMonthlyData[currentKey]?.shifts || {};
-  const currentWishes = allMonthlyData[currentKey]?.wishes || {};
-
-  const [selectedCell, setSelectedCell] = useState(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
-  const [aiAnalysisResult, setAiAnalysisResult] = useState('');
-  const [toastMessage, setToastMessage] = useState(null);
-
-  // 希望入力用の選択パレット（デフォルトは「休み」）
-  const [selectedWishPalette, setSelectedWishPalette] = useState('OFF');
-
-  // AI画像・テキスト希望入力用の状態
-  const [textWishInput, setTextWishInput] = useState('');
-  const [isParsingWish, setIsParsingWish] = useState(false);
-  const fileInputRef = useRef(null);
-
-  const [newMemberName, setNewMemberName] = useState('');
-  const [editingMemberId, setEditingMemberId] = useState(null);
-  const [editingMemberName, setEditingMemberName] = useState('');
-
-  const daysInMonth = useMemo(() => {
-    return new Date(year, month, 0).getDate();
-  }, [year, month]);
-
-  // 月曜日始まりのカレンダー構造データ
-  const { daysList, firstDayOffset } = useMemo(() => {
-    const list = [];
-    const firstDate = new Date(year, month - 1, 1);
-    const firstRawDay = firstDate.getDay();
-    const offset = firstRawDay === 0 ? 6 : firstRawDay - 1;
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(year, month - 1, day);
-      const rawDay = date.getDay();
-      const monStartIdx = rawDay === 0 ? 6 : rawDay - 1;
-      const dayOfWeek = WEEKDAYS_MON_START[monStartIdx];
-      const isWeekend = rawDay === 0 || rawDay === 6;
-      list.push({ day, dayOfWeek, monStartIdx, isWeekend, isSunday: rawDay === 0, isSaturday: rawDay === 6 });
-    }
-    return { daysList: list, firstDayOffset: offset };
-  }, [year, month, daysInMonth]);
-
-  const showToast = (msg) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
-
-  useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [darkMode]);
-
-  // 初期化＆自動クリーンアップ
-  useEffect(() => {
-    setAllMonthlyData(prev => {
-      const updated = { ...prev };
-      
-      if (!updated[currentKey]) {
-        const initShifts = {};
-        const initWishes = {};
-        members.forEach(m => {
-          initShifts[m.id] = {};
-          initWishes[m.id] = {};
-          for (let d = 1; d <= daysInMonth; d++) {
-            initShifts[m.id][d] = 'OFF';
-          }
-        });
-        updated[currentKey] = { shifts: initShifts, wishes: initWishes };
-      }
-
-      const prevDate = new Date(year, month - 2, 1);
-      const prevKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
-      
-      Object.keys(updated).forEach(key => {
-        if (key !== currentKey && key !== prevKey) {
-          delete updated[key];
-        }
-      });
-
-      return updated;
-    });
-  }, [year, month, daysInMonth, currentKey, members]);
-
-  const handleMonthChange = (newYear, newMonth) => {
-    if (newMonth > 12) {
-      newYear += 1;
-      newMonth = 1;
-    } else if (newMonth < 1) {
-      newYear -= 1;
-      newMonth = 12;
-    }
-    setYear(newYear);
-    setMonth(newMonth);
-    showToast(`【${newYear}年${newMonth}月】を表示中`);
-  };
-
-  const setShiftsForCurrentMonth = (newShifts) => {
-    setAllMonthlyData(prev => ({
-      ...prev,
-      [currentKey]: {
-        ...prev[currentKey],
-        shifts: newShifts
-      }
-    }));
-  };
-
-  const setWishForMember = (memberId, day, wishType) => {
-    setAllMonthlyData(prev => {
-      const currentMonthWish = prev[currentKey]?.wishes || {};
-      const memberWishes = currentMonthWish[memberId] || {};
-      const newMemberWishes = { ...memberWishes };
-      
-      if (wishType === null || wishType === 'CLEAR') {
-        delete newMemberWishes[day];
-      } else {
-        newMemberWishes[day] = { type: wishType };
-      }
-
-      return {
-        ...prev,
-        [currentKey]: {
-          ...prev[currentKey],
-          wishes: {
-            ...currentMonthWish,
-            [memberId]: newMemberWishes
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#fdf2f8',
+              500: '#ec4899',
+              600: '#db2777',
+            }
           }
         }
+      }
+    }
+  </script>
+
+  <!-- React 18 & ReactDOM 18 UMD -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel Standalone for in-browser JSX compilation -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    .scrollbar-none::-webkit-scrollbar {
+      display: none;
+    }
+    .scrollbar-none {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    body {
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 transition-colors duration-200">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    // 高速・安全なインラインSVGアイコン群
+    const IconBase = ({ d, className = "w-4 h-4", strokeWidth = 2, fill = "none" }) => (
+      <svg className={className} viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+        {Array.isArray(d) ? d.map((p, i) => <path key={i} d={p} />) : <path d={d} />}
+      </svg>
+    );
+
+    const Calendar = ({ className }) => <IconBase className={className} d={["M19 4H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2z", "M16 2v4", "M8 2v4", "M3 10h18"]} />;
+    const Sparkles = ({ className }) => <IconBase className={className} d={["m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3z", "M5 3v4", "M19 17v4", "M3 5h4", "M17 19h4"]} />;
+    const Download = ({ className }) => <IconBase className={className} d={["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"]} />;
+    const Moon = ({ className }) => <IconBase className={className} d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />;
+    const Sun = ({ className }) => <IconBase className={className} d={["M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z", "M12 2v2", "M12 20v2", "m4.93 4.93 1.41 1.41", "m17.66 17.66 1.41 1.41", "M2 12h2", "M20 12h2", "m6.34 17.66-1.41 1.41", "m19.07 4.93-1.41 1.41"]} />;
+    const ChevronLeft = ({ className }) => <IconBase className={className} d="m15 18-6-6 6-6" />;
+    const ChevronRight = ({ className }) => <IconBase className={className} d="m9 18 6-6-6-6" />;
+    const UserCheck = ({ className }) => <IconBase className={className} d={["M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", "M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z", "m16 11 2 2 4-4"]} />;
+    const ShieldCheck = ({ className }) => <IconBase className={className} d={["M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z", "m9 12 2 2 4-4"]} />;
+    const Brain = ({ className }) => <IconBase className={className} d={["M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.04z", "M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.04z"]} />;
+    const Settings = ({ className }) => <IconBase className={className} d={["M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z", "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"]} />;
+    const Plus = ({ className }) => <IconBase className={className} d={["M5 12h14", "M12 5v14"]} />;
+    const Trash2 = ({ className }) => <IconBase className={className} d={["M3 6h18", "M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6", "M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2", "M10 11v6", "M14 11v6"]} />;
+    const Edit3 = ({ className }) => <IconBase className={className} d={["M12 20h9", "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"]} />;
+    const Check = ({ className }) => <IconBase className={className} d="M20 6 9 17l-5-5" />;
+    const CheckCircle2 = ({ className }) => <IconBase className={className} d={["M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z", "m9 12 2 2 4-4"]} />;
+    const AlertCircle = ({ className }) => <IconBase className={className} d={["M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z", "M12 8v4", "M12 16h.01"]} />;
+    const X = ({ className }) => <IconBase className={className} d={["M18 6 6 18", "M6 6l12 12"]} />;
+    const Info = ({ className }) => <IconBase className={className} d={["M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z", "M12 16v-4", "M12 8h.01"]} />;
+    const FileText = ({ className }) => <IconBase className={className} d={["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z", "M14 2v6h6", "M16 13H8", "M16 17H8", "M10 9H8"]} />;
+    const Upload = ({ className }) => <IconBase className={className} d={["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m17 8-5-5-5 5", "M12 3v12"]} />;
+    const Send = ({ className }) => <IconBase className={className} d={["m22 2-7 20-4-9-9-4Z", "M22 2 11 13"]} />;
+    const ZoomIn = ({ className }) => <IconBase className={className} d={["M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z", "M10 7v6", "M7 10h6"]} />;
+    const ZoomOut = ({ className }) => <IconBase className={className} d={["M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z", "M7 10h6"]} />;
+
+    const SHIFT_TYPES = {
+      EARLY: { id: 'EARLY', label: '早番', time: '9:00-18:00', short: '早', bg: 'bg-pink-100 dark:bg-pink-950/70', text: 'text-pink-700 dark:text-pink-300', border: 'border-pink-300 dark:border-pink-800' },
+      MIDDLE: { id: 'MIDDLE', label: '中番', time: '11:00-20:00', short: '中', bg: 'bg-amber-100 dark:bg-amber-950/70', text: 'text-amber-700 dark:text-amber-300', border: 'border-amber-300 dark:border-amber-800' },
+      LATE: { id: 'LATE', label: '遅番', time: '13:00-22:00', short: '遅', bg: 'bg-blue-100 dark:bg-blue-950/70', text: 'text-blue-700 dark:text-blue-300', border: 'border-blue-300 dark:border-blue-800' },
+      TRAINING: { id: 'TRAINING', label: '社内', time: '社内研修', short: '社', bg: 'bg-emerald-100 dark:bg-emerald-950/70', text: 'text-emerald-700 dark:text-emerald-300', border: 'border-emerald-300 dark:border-emerald-800' },
+      REWARD: { id: 'REWARD', label: '褒賞', time: '特別勤務', short: '褒', bg: 'bg-purple-100 dark:bg-purple-950/70', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-300 dark:border-purple-800' },
+      OFF: { id: 'OFF', label: '休み', time: '休日', short: '休', bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-500 dark:text-slate-400', border: 'border-slate-200 dark:border-slate-700' },
+    };
+
+    const INITIAL_MEMBERS = [
+      { id: 'm1', name: '佐藤 店長' },
+      { id: 'm2', name: '田中 さん' },
+      { id: 'm3', name: '鈴木 さん' },
+      { id: 'm4', name: '高橋 さん' },
+    ];
+
+    const WEEKDAYS_MON_START = ['月', '火', '水', '木', '金', '土', '日'];
+    const API_KEY = ""; // デフォルトGoogle Gemini APIキー
+
+    async function callGeminiApi(payload, customKey = "", retries = 5, delay = 1000) {
+      const activeKey = customKey || API_KEY;
+      const model = "gemini-3-flash-preview";
+      for (let i = 0; i < retries; i++) {
+        try {
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${activeKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            }
+          );
+          if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+          return await response.json();
+        } catch (e) {
+          if (i === retries - 1) throw e;
+          await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
+        }
+      }
+    }
+
+    const cleanAiText = (text) => {
+      if (!text) return '';
+      return text
+        .replace(/[\*#_~`]/g, '')
+        .replace(/^\s*[-+]\s+/gm, '・ ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    };
+
+    function App() {
+      const [darkMode, setDarkMode] = useState(false);
+      const [activeTab, setActiveTab] = useState('matrix');
+      const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('shift_gemini_api_key') || '');
+      const [viewScale, setViewScale] = useState('normal'); // 'normal' | 'compact'
+      
+      const today = new Date();
+      const nextMonthDate = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+      const [year, setYear] = useState(nextMonthDate.getFullYear());
+      const [month, setMonth] = useState(nextMonthDate.getMonth() + 1);
+      
+      const currentKey = `${year}-${String(month).padStart(2, '0')}`;
+
+      const [members, setMembers] = useState(INITIAL_MEMBERS);
+      const [requiredWorkDays, setRequiredWorkDays] = useState(20);
+
+      const [allMonthlyData, setAllMonthlyData] = useState({});
+
+      const currentShifts = allMonthlyData[currentKey]?.shifts || {};
+      const currentWishes = allMonthlyData[currentKey]?.wishes || {};
+
+      const [selectedCell, setSelectedCell] = useState(null);
+      const [isGenerating, setIsGenerating] = useState(false);
+      const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
+      const [aiAnalysisResult, setAiAnalysisResult] = useState('');
+      const [toastMessage, setToastMessage] = useState(null);
+
+      // 希望入力用の選択パレット（デフォルトは「休み」）
+      const [selectedWishPalette, setSelectedWishPalette] = useState('OFF');
+      const [textWishInput, setTextWishInput] = useState('');
+      const [isParsingWish, setIsParsingWish] = useState(false);
+      const fileInputRef = useRef(null);
+
+      const [newMemberName, setNewMemberName] = useState('');
+      const [editingMemberId, setEditingMemberId] = useState(null);
+      const [editingMemberName, setEditingMemberName] = useState('');
+
+      // 希望シフトの長押し直接入力用の状態・タイマー
+      const [wishModalParams, setWishModalParams] = useState(null);
+      const pressTimer = useRef(null);
+      const isLongPress = useRef(false);
+
+      const daysInMonth = useMemo(() => {
+        return new Date(year, month, 0).getDate();
+      }, [year, month]);
+
+      const { daysList, firstDayOffset } = useMemo(() => {
+        const list = [];
+        const firstDate = new Date(year, month - 1, 1);
+        const firstRawDay = firstDate.getDay();
+        const offset = firstRawDay === 0 ? 6 : firstRawDay - 1;
+
+        for (let day = 1; day <= daysInMonth; day++) {
+          const date = new Date(year, month - 1, day);
+          const rawDay = date.getDay();
+          const monStartIdx = rawDay === 0 ? 6 : rawDay - 1;
+          const dayOfWeek = WEEKDAYS_MON_START[monStartIdx];
+          const isWeekend = rawDay === 0 || rawDay === 6;
+          list.push({ day, dayOfWeek, monStartIdx, isWeekend, isSunday: rawDay === 0, isSaturday: rawDay === 6 });
+        }
+        return { daysList: list, firstDayOffset: offset };
+      }, [year, month, daysInMonth]);
+
+      const showToast = (msg) => {
+        setToastMessage(msg);
+        setTimeout(() => setToastMessage(null), 3500);
       };
-    });
-  };
 
-  // 1タップでアクティブな区分を希望シフトに登録
-  const handleDateCellClickForWish = (memberId, day) => {
-    setWishForMember(memberId, day, selectedWishPalette);
-  };
-
-  const getPrevMonthLastDaysShifts = () => {
-    const prevDate = new Date(year, month - 2, 1);
-    const prevKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
-    const prevData = allMonthlyData[prevKey];
-    
-    if (!prevData || !prevData.shifts) return {};
-
-    const prevDaysInMonth = new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 0).getDate();
-    const result = {};
-
-    members.forEach(m => {
-      const memberShifts = prevData.shifts[m.id] || {};
-      let consecutiveWorkAtEnd = 0;
-      for (let d = prevDaysInMonth; d >= 1; d--) {
-        if (memberShifts[d] && memberShifts[d] !== 'OFF') {
-          consecutiveWorkAtEnd++;
+      useEffect(() => {
+        if (darkMode) {
+          document.documentElement.classList.add('dark');
         } else {
-          break;
+          document.documentElement.classList.remove('dark');
         }
-      }
-      const lastDayShift = memberShifts[prevDaysInMonth] || 'OFF';
-      result[m.id] = { consecutiveWorkAtEnd, lastDayShift };
-    });
+      }, [darkMode]);
 
-    return result;
-  };
-
-  // 精密な連勤数計算関数（前月連勤も含む）
-  const getExactConsecutiveWorkDays = (memberId, day, shiftTypeProposed, shiftsMap, prevMonthInfo) => {
-    if (!shiftTypeProposed || shiftTypeProposed === 'OFF') return 0;
-
-    const temp = { ...shiftsMap[memberId], [day]: shiftTypeProposed };
-
-    let prevWork = 0;
-    for (let d = day - 1; d >= 1; d--) {
-      if (temp[d] && temp[d] !== 'OFF') prevWork++;
-      else break;
-    }
-    if (day - 1 - prevWork < 1) {
-      prevWork += prevMonthInfo?.[memberId]?.consecutiveWorkAtEnd || 0;
-    }
-
-    let nextWork = 0;
-    for (let d = day + 1; d <= daysInMonth; d++) {
-      if (temp[d] && temp[d] !== 'OFF') nextWork++;
-      else break;
-    }
-
-    return prevWork + 1 + nextWork;
-  };
-
-  // 双方向の逆シフト判定
-  const isReverseShiftBidirectional = (memberId, day, newShiftType, shiftsMap, prevMonthInfo) => {
-    if (!newShiftType || newShiftType === 'OFF') return false;
-
-    if (newShiftType === 'EARLY' || newShiftType === 'MIDDLE') {
-      const prevShift = day > 1 ? shiftsMap[memberId]?.[day - 1] : prevMonthInfo?.[memberId]?.lastDayShift;
-      if (prevShift === 'LATE') return true;
-    }
-
-    if (newShiftType === 'LATE') {
-      const nextShift = day < daysInMonth ? shiftsMap[memberId]?.[day + 1] : null;
-      if (nextShift === 'EARLY' || nextShift === 'MIDDLE') return true;
-    }
-
-    return false;
-  };
-
-  // AI テキスト＆画像解析モジュール
-  const processAIWishInput = async (promptText, imageBase64 = null) => {
-    setIsParsingWish(true);
-    try {
-      const jsonSchema = {
-        type: "OBJECT",
-        properties: {
-          parsedWishes: {
-            type: "ARRAY",
-            items: {
-              type: "OBJECT",
-              properties: {
-                memberName: { type: "STRING" },
-                day: { type: "INTEGER" },
-                wishType: { type: "STRING", description: "OFF, EARLY, MIDDLE, LATE のいずれか" }
-              },
-              required: ["memberName", "day", "wishType"]
-            }
+      useEffect(() => {
+        setAllMonthlyData(prev => {
+          const updated = { ...prev };
+          
+          if (!updated[currentKey]) {
+            const initShifts = {};
+            const initWishes = {};
+            members.forEach(m => {
+              initShifts[m.id] = {};
+              initWishes[m.id] = {};
+              for (let d = 1; d <= daysInMonth; d++) {
+                initShifts[m.id][d] = 'OFF';
+              }
+            });
+            updated[currentKey] = { shifts: initShifts, wishes: initWishes };
           }
-        },
-        required: ["parsedWishes"]
+
+          const prevDate = new Date(year, month - 2, 1);
+          const prevKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+          
+          Object.keys(updated).forEach(key => {
+            if (key !== currentKey && key !== prevKey) {
+              delete updated[key];
+            }
+          });
+
+          return updated;
+        });
+      }, [year, month, daysInMonth, currentKey, members]);
+
+      const handleMonthChange = (newYear, newMonth) => {
+        if (newMonth > 12) {
+          newYear += 1;
+          newMonth = 1;
+        } else if (newMonth < 1) {
+          newYear -= 1;
+          newMonth = 12;
+        }
+        setYear(newYear);
+        setMonth(newMonth);
+        showToast(`【${newYear}年${newMonth}月】を表示中`);
       };
 
-      const parts = [];
-      if (imageBase64) {
-        parts.push({
-          inlineData: {
-            mimeType: "image/png",
-            data: imageBase64
-          }
-        });
-      }
-
-      const instruction = `登録スタッフ: ${members.map(m => m.name).join(', ')}。年月: ${year}年${month}月 (${daysInMonth}日まで)。
-希望シフト情報から各スタッフの希望日と希望種別(OFF, EARLY, MIDDLE, LATE)を抽出してJSONで返してください。`;
-
-      parts.push({ text: promptText || instruction });
-
-      const payload = {
-        contents: [{ role: "user", parts }],
-        systemInstruction: { parts: [{ text: instruction }] },
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: jsonSchema
-        }
-      };
-
-      const res = await callGeminiApi(payload);
-      const jsonText = res.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!jsonText) throw new Error("解析データが得られませんでした。");
-
-      const parsedData = JSON.parse(jsonText);
-      const wishesList = parsedData.parsedWishes || [];
-
-      if (wishesList.length === 0) {
-        showToast("希望指定が検出されませんでした。");
-        setIsParsingWish(false);
-        return;
-      }
-
-      let appliedCount = 0;
-      setAllMonthlyData(prev => {
-        const currentMonthWish = { ...(prev[currentKey]?.wishes || {}) };
-
-        wishesList.forEach(item => {
-          const targetMem = members.find(m => m.name.includes(item.memberName) || item.memberName.includes(m.name));
-          if (targetMem && item.day >= 1 && item.day <= daysInMonth) {
-            if (!currentMonthWish[targetMem.id]) {
-              currentMonthWish[targetMem.id] = {};
-            }
-            const validWishType = ['OFF', 'EARLY', 'MIDDLE', 'LATE'].includes(item.wishType) ? item.wishType : 'OFF';
-            currentMonthWish[targetMem.id][item.day] = { type: validWishType };
-            appliedCount++;
-          }
-        });
-
-        return {
+      const setShiftsForCurrentMonth = (newShifts) => {
+        setAllMonthlyData(prev => ({
           ...prev,
           [currentKey]: {
             ...prev[currentKey],
-            wishes: currentMonthWish
+            shifts: newShifts
           }
-        };
-      });
-
-      setTextWishInput('');
-      showToast(`AI解析成功：${appliedCount}件の希望シフトを一括登録しました！`);
-    } catch (e) {
-      console.error(e);
-      showToast("AI解析でエラーが発生しました。内容をご確認ください。");
-    } finally {
-      setIsParsingWish(false);
-    }
-  };
-
-  const handleImageUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64Data = event.target?.result?.split(',')[1];
-      if (base64Data) {
-        processAIWishInput("添付されたシフト希望画像から希望日程とシフト種別をすべて読み取り抽出してください。", base64Data);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // =========================================================
-  // 【シフト自動生成エンジン】
-  // =========================================================
-  const generateAutoShifts = () => {
-    setIsGenerating(true);
-
-    setTimeout(() => {
-      const newShifts = {};
-      const prevMonthInfo = getPrevMonthLastDaysShifts();
-      const requiredOffDays = daysInMonth - requiredWorkDays;
-
-      members.forEach(m => {
-        newShifts[m.id] = {};
-        for (let d = 1; d <= daysInMonth; d++) {
-          newShifts[m.id][d] = null;
-        }
-      });
-
-      members.forEach(m => {
-        for (let d = 1; d <= daysInMonth; d++) {
-          const wish = currentWishes[m.id]?.[d];
-          if (wish?.type) {
-            newShifts[m.id][d] = wish.type;
-          }
-        }
-      });
-
-      const halfMonth = Math.floor(daysInMonth / 2);
-      members.forEach((m, mIdx) => {
-        const offNeededHalf = Math.round(requiredOffDays / 2);
-
-        let firstHalfOffs = 0;
-        for (let d = 1; d <= halfMonth; d++) {
-          if (newShifts[m.id][d] === 'OFF') firstHalfOffs++;
-        }
-        const firstInterval = halfMonth / Math.max(1, offNeededHalf - firstHalfOffs);
-        let offset = (mIdx * 1.7) % firstInterval;
-        for (let d = 1; d <= halfMonth; d++) {
-          if (firstHalfOffs >= offNeededHalf) break;
-          const targetDay = Math.min(halfMonth, Math.max(1, Math.round((firstHalfOffs + 0.5) * firstInterval + offset)));
-          if (newShifts[m.id][targetDay] === null) {
-            newShifts[m.id][targetDay] = 'OFF';
-            firstHalfOffs++;
-          }
-        }
-
-        let secondHalfOffs = 0;
-        for (let d = halfMonth + 1; d <= daysInMonth; d++) {
-          if (newShifts[m.id][d] === 'OFF') secondHalfOffs++;
-        }
-        const secondInterval = (daysInMonth - halfMonth) / Math.max(1, offNeededHalf - secondHalfOffs);
-        offset = (mIdx * 1.9) % secondInterval;
-        for (let d = halfMonth + 1; d <= daysInMonth; d++) {
-          if (secondHalfOffs >= offNeededHalf) break;
-          const targetDay = Math.min(daysInMonth, Math.max(halfMonth + 1, Math.round(halfMonth + (secondHalfOffs + 0.5) * secondInterval + offset)));
-          if (newShifts[m.id][targetDay] === null) {
-            newShifts[m.id][targetDay] = 'OFF';
-            secondHalfOffs++;
-          }
-        }
-      });
-
-      const findCandidateStrict = (day, shiftType, maxConsecutiveAllowed = 4) => {
-        const pool = members.filter(m => {
-          if (newShifts[m.id][day] !== null && newShifts[m.id][day] !== 'OFF') return false;
-          if (currentWishes[m.id]?.[day]?.type === 'OFF') return false;
-          const currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
-          if (currentWorkCount >= requiredWorkDays) return false;
-          return true;
-        });
-
-        const candidates = pool.filter(m => {
-          const cons = getExactConsecutiveWorkDays(m.id, day, shiftType, newShifts, prevMonthInfo);
-          if (cons > maxConsecutiveAllowed) return false;
-          if (isReverseShiftBidirectional(m.id, day, shiftType, newShifts, prevMonthInfo)) return false;
-          return true;
-        });
-
-        if (candidates.length === 0) return null;
-
-        candidates.sort((a, b) => {
-          const workA = Object.values(newShifts[a.id]).filter(s => s && s !== 'OFF').length;
-          const workB = Object.values(newShifts[b.id]).filter(s => s && s !== 'OFF').length;
-          return workA - workB;
-        });
-
-        return candidates[0];
+        }));
       };
 
-      for (let d = 1; d <= daysInMonth; d++) {
-        if (!members.some(m => newShifts[m.id][d] === 'EARLY')) {
-          let cand = findCandidateStrict(d, 'EARLY', 4) || findCandidateStrict(d, 'EARLY', 5);
-          if (cand) newShifts[cand.id][d] = 'EARLY';
-        }
-        if (!members.some(m => newShifts[m.id][d] === 'LATE')) {
-          let cand = findCandidateStrict(d, 'LATE', 4) || findCandidateStrict(d, 'LATE', 5);
-          if (cand) newShifts[cand.id][d] = 'LATE';
-        }
-      }
+      // 希望シフトのトグル登録（同じ区分なら解除、未設定なら登録）
+      const setWishForMember = (memberId, day, wishType) => {
+        setAllMonthlyData(prev => {
+          const currentMonthWish = prev[currentKey]?.wishes || {};
+          const memberWishes = currentMonthWish[memberId] || {};
+          const newMemberWishes = { ...memberWishes };
+          
+          if (memberWishes[day]?.type === wishType || wishType === null) {
+            // トグル：既に同じ区分が設定されていれば削除
+            delete newMemberWishes[day];
+          } else {
+            // 新規設定または上書き
+            newMemberWishes[day] = { type: wishType };
+          }
 
-      daysList.filter(dl => dl.isWeekend).forEach(({ day }) => {
-        const earlyCount = members.filter(m => newShifts[m.id][day] === 'EARLY').length;
-        if (earlyCount < 2) {
-          let cand = findCandidateStrict(day, 'EARLY', 4) || findCandidateStrict(day, 'EARLY', 5);
-          if (cand) newShifts[cand.id][day] = 'EARLY';
+          return {
+            ...prev,
+            [currentKey]: {
+              ...prev[currentKey],
+              wishes: {
+                ...currentMonthWish,
+                [memberId]: newMemberWishes
+              }
+            }
+          };
+        });
+      };
+
+      const handleDateCellClickForWish = (memberId, day) => {
+        setWishForMember(memberId, day, selectedWishPalette);
+      };
+
+      // タッチ・マウス長押し関連のイベントハンドラ
+      const handlePointerDownForWish = (memberId, day, e) => {
+        // 左クリック or タッチのみ処理
+        if (e.button !== 0 && e.pointerType === 'mouse') return;
+        
+        isLongPress.current = false;
+        pressTimer.current = setTimeout(() => {
+          isLongPress.current = true;
+          const memberName = members.find(m => m.id === memberId)?.name || '';
+          setWishModalParams({ memberId, day, memberName });
+          // スマホ向け: 長押し検知時に軽くバイブレーション
+          if (navigator.vibrate) navigator.vibrate(50);
+        }, 400); // 400ms長押しで発火
+      };
+
+      const handlePointerUpForWish = (memberId, day, e) => {
+        if (pressTimer.current) {
+          clearTimeout(pressTimer.current);
+          pressTimer.current = null;
+        }
+        // 長押し判定されていなければ通常のワンタップ処理を実行
+        if (!isLongPress.current) {
+          handleDateCellClickForWish(memberId, day);
+        }
+        isLongPress.current = false;
+      };
+
+      const handlePointerCancelForWish = () => {
+        if (pressTimer.current) {
+          clearTimeout(pressTimer.current);
+          pressTimer.current = null;
+        }
+        isLongPress.current = false;
+      };
+
+      const preventContextMenu = (e) => {
+        e.preventDefault(); // スマホ等の長押しメニューを防止
+      };
+
+      const getPrevMonthLastDaysShifts = () => {
+        const prevDate = new Date(year, month - 2, 1);
+        const prevKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+        const prevData = allMonthlyData[prevKey];
+        
+        if (!prevData || !prevData.shifts) return {};
+
+        const prevDaysInMonth = new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 0).getDate();
+        const result = {};
+
+        members.forEach(m => {
+          const memberShifts = prevData.shifts[m.id] || {};
+          let consecutiveWorkAtEnd = 0;
+          for (let d = prevDaysInMonth; d >= 1; d--) {
+            if (memberShifts[d] && memberShifts[d] !== 'OFF') {
+              consecutiveWorkAtEnd++;
+            } else {
+              break;
+            }
+          }
+          const lastDayShift = memberShifts[prevDaysInMonth] || 'OFF';
+          result[m.id] = { consecutiveWorkAtEnd, lastDayShift };
+        });
+
+        return result;
+      };
+
+      const getExactConsecutiveWorkDays = (memberId, day, shiftTypeProposed, shiftsMap, prevMonthInfo) => {
+        if (!shiftTypeProposed || shiftTypeProposed === 'OFF') return 0;
+
+        const temp = { ...shiftsMap[memberId], [day]: shiftTypeProposed };
+
+        let prevWork = 0;
+        for (let d = day - 1; d >= 1; d--) {
+          if (temp[d] && temp[d] !== 'OFF') prevWork++;
+          else break;
+        }
+        if (day - 1 - prevWork < 1) {
+          prevWork += prevMonthInfo?.[memberId]?.consecutiveWorkAtEnd || 0;
         }
 
-        const lateCount = members.filter(m => newShifts[m.id][day] === 'LATE').length;
-        if (lateCount < 2) {
-          let cand = findCandidateStrict(day, 'LATE', 4) || findCandidateStrict(day, 'LATE', 5);
-          if (cand) newShifts[cand.id][day] = 'LATE';
+        let nextWork = 0;
+        for (let d = day + 1; d <= daysInMonth; d++) {
+          if (temp[d] && temp[d] !== 'OFF') nextWork++;
+          else break;
         }
-      });
 
-      members.forEach(m => {
-        let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
+        return prevWork + 1 + nextWork;
+      };
 
-        while (currentWorkCount < requiredWorkDays) {
-          let validDays = [];
+      // 前日より早い出勤（遅→早, 遅→中, 中→早）を判定するロジック
+      const isShiftEarlierThan = (prevShift, nextShift) => {
+        if (!prevShift || prevShift === 'OFF' || !nextShift || nextShift === 'OFF') return false;
+        const rank = { EARLY: 1, MIDDLE: 2, LATE: 3 }; // 数字が大きいほど遅い時間帯
+        const prevRank = rank[prevShift] || 0;
+        const nextRank = rank[nextShift] || 0;
+        // 前日が設定されており、かつ当日の方が時間が早い(rankが小さい)場合はtrue
+        return prevRank > 0 && nextRank > 0 && prevRank > nextRank;
+      };
+
+      // 自動生成で前日より早い出勤を双方向にブロック
+      const isReverseShiftBidirectional = (memberId, day, newShiftType, shiftsMap, prevMonthInfo) => {
+        if (!newShiftType || newShiftType === 'OFF') return false;
+
+        const prevShift = day > 1 ? shiftsMap[memberId]?.[day - 1] : prevMonthInfo?.[memberId]?.lastDayShift;
+        if (isShiftEarlierThan(prevShift, newShiftType)) return true;
+
+        const nextShift = day < daysInMonth ? shiftsMap[memberId]?.[day + 1] : null;
+        if (isShiftEarlierThan(newShiftType, nextShift)) return true;
+
+        return false;
+      };
+
+      const processAIWishInput = async (promptText, imageBase64 = null) => {
+        setIsParsingWish(true);
+        try {
+          const jsonSchema = {
+            type: "OBJECT",
+            properties: {
+              parsedWishes: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    memberName: { type: "STRING" },
+                    day: { type: "INTEGER" },
+                    wishType: { type: "STRING", description: "OFF, EARLY, MIDDLE, LATE のいずれか" }
+                  },
+                  required: ["memberName", "day", "wishType"]
+                }
+              }
+            },
+            required: ["parsedWishes"]
+          };
+
+          const parts = [];
+          if (imageBase64) {
+            parts.push({
+              inlineData: {
+                mimeType: "image/png",
+                data: imageBase64
+              }
+            });
+          }
+
+          const instruction = `登録スタッフ: ${members.map(m => m.name).join(', ')}。年月: ${year}年${month}月 (${daysInMonth}日まで)。
+希望シフト情報から各スタッフの希望日と希望種別(OFF, EARLY, MIDDLE, LATE)を抽出してJSONで返してください。`;
+
+          parts.push({ text: promptText || instruction });
+
+          const payload = {
+            contents: [{ role: "user", parts }],
+            systemInstruction: { parts: [{ text: instruction }] },
+            generationConfig: {
+              responseMimeType: "application/json",
+              responseSchema: jsonSchema
+            }
+          };
+
+          const res = await callGeminiApi(payload, userApiKey);
+          const jsonText = res?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+          if (!jsonText) throw new Error("解析データが得られませんでした。");
+
+          const parsedData = JSON.parse(jsonText);
+          const wishesList = parsedData.parsedWishes || [];
+
+          if (wishesList.length === 0) {
+            showToast("希望指定が検出されませんでした。");
+            setIsParsingWish(false);
+            return;
+          }
+
+          let appliedCount = 0;
+          setAllMonthlyData(prev => {
+            const currentMonthWish = { ...(prev[currentKey]?.wishes || {}) };
+
+            wishesList.forEach(item => {
+              const targetMem = members.find(m => m.name.includes(item.memberName) || item.memberName.includes(m.name));
+              if (targetMem && item.day >= 1 && item.day <= daysInMonth) {
+                if (!currentMonthWish[targetMem.id]) {
+                  currentMonthWish[targetMem.id] = {};
+                }
+                const validWishType = ['OFF', 'EARLY', 'MIDDLE', 'LATE'].includes(item.wishType) ? item.wishType : 'OFF';
+                currentMonthWish[targetMem.id][item.day] = { type: validWishType };
+                appliedCount++;
+              }
+            });
+
+            return {
+              ...prev,
+              [currentKey]: {
+                ...prev[currentKey],
+                wishes: currentMonthWish
+              }
+            };
+          });
+
+          setTextWishInput('');
+          showToast(`AI解析成功：${appliedCount}件の希望シフトを一括登録しました！`);
+        } catch (e) {
+          console.error(e);
+          showToast("AI解析でエラーが発生しました。設定でAPIキーをご確認ください。");
+        } finally {
+          setIsParsingWish(false);
+        }
+      };
+
+      const handleImageUpload = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const base64Data = event.target?.result?.split(',')[1];
+          if (base64Data) {
+            processAIWishInput("添付されたシフト希望画像から希望日程とシフト種別をすべて読み取り抽出してください。", base64Data);
+          }
+        };
+        reader.readAsDataURL(file);
+      };
+
+      const generateAutoShifts = () => {
+        setIsGenerating(true);
+
+        setTimeout(() => {
+          const newShifts = {};
+          const prevMonthInfo = getPrevMonthLastDaysShifts();
+          const requiredOffDays = daysInMonth - requiredWorkDays;
+
+          members.forEach(m => {
+            newShifts[m.id] = {};
+            for (let d = 1; d <= daysInMonth; d++) {
+              newShifts[m.id][d] = null;
+            }
+          });
+
+          // 希望の反映
+          members.forEach(m => {
+            for (let d = 1; d <= daysInMonth; d++) {
+              const wish = currentWishes[m.id]?.[d];
+              if (wish?.type) {
+                newShifts[m.id][d] = wish.type;
+              }
+            }
+          });
+
+          // 前半・後半で休みの偏りを防止
+          const halfMonth = Math.floor(daysInMonth / 2);
+          members.forEach((m, mIdx) => {
+            const offNeededHalf = Math.round(requiredOffDays / 2);
+
+            let firstHalfOffs = 0;
+            for (let d = 1; d <= halfMonth; d++) {
+              if (newShifts[m.id][d] === 'OFF') firstHalfOffs++;
+            }
+            const firstInterval = halfMonth / Math.max(1, offNeededHalf - firstHalfOffs);
+            let offset = (mIdx * 1.7) % firstInterval;
+            for (let d = 1; d <= halfMonth; d++) {
+              if (firstHalfOffs >= offNeededHalf) break;
+              const targetDay = Math.min(halfMonth, Math.max(1, Math.round((firstHalfOffs + 0.5) * firstInterval + offset)));
+              if (newShifts[m.id][targetDay] === null) {
+                newShifts[m.id][targetDay] = 'OFF';
+                firstHalfOffs++;
+              }
+            }
+
+            let secondHalfOffs = 0;
+            for (let d = halfMonth + 1; d <= daysInMonth; d++) {
+              if (newShifts[m.id][d] === 'OFF') secondHalfOffs++;
+            }
+            const secondInterval = (daysInMonth - halfMonth) / Math.max(1, offNeededHalf - secondHalfOffs);
+            offset = (mIdx * 1.9) % secondInterval;
+            for (let d = halfMonth + 1; d <= daysInMonth; d++) {
+              if (secondHalfOffs >= offNeededHalf) break;
+              const targetDay = Math.min(daysInMonth, Math.max(halfMonth + 1, Math.round(halfMonth + (secondHalfOffs + 0.5) * secondInterval + offset)));
+              if (newShifts[m.id][targetDay] === null) {
+                newShifts[m.id][targetDay] = 'OFF';
+                secondHalfOffs++;
+              }
+            }
+          });
+
+          const findCandidateStrict = (day, shiftType, maxConsecutiveAllowed = 4) => {
+            const pool = members.filter(m => {
+              if (newShifts[m.id][day] !== null && newShifts[m.id][day] !== 'OFF') return false;
+              if (currentWishes[m.id]?.[day]?.type === 'OFF') return false;
+              const currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
+              if (currentWorkCount >= requiredWorkDays) return false;
+              return true;
+            });
+
+            const candidates = pool.filter(m => {
+              const cons = getExactConsecutiveWorkDays(m.id, day, shiftType, newShifts, prevMonthInfo);
+              if (cons > maxConsecutiveAllowed) return false;
+              // 逆シフト（前日より早い出勤）の回避
+              if (isReverseShiftBidirectional(m.id, day, shiftType, newShifts, prevMonthInfo)) return false;
+              return true;
+            });
+
+            if (candidates.length === 0) return null;
+
+            candidates.sort((a, b) => {
+              const workA = Object.values(newShifts[a.id]).filter(s => s && s !== 'OFF').length;
+              const workB = Object.values(newShifts[b.id]).filter(s => s && s !== 'OFF').length;
+              return workA - workB;
+            });
+
+            return candidates[0];
+          };
 
           for (let d = 1; d <= daysInMonth; d++) {
-            if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
-              const cons = getExactConsecutiveWorkDays(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
-              const isRev = isReverseShiftBidirectional(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
-
-              if (!isRev && cons <= 5) {
-                const totalWorkingToday = members.filter(mem => newShifts[mem.id][d] && newShifts[mem.id][d] !== 'OFF').length;
-                validDays.push({ day: d, totalWorkingToday, cons });
-              }
+            if (!members.some(m => newShifts[m.id][d] === 'EARLY')) {
+              let cand = findCandidateStrict(d, 'EARLY', 4) || findCandidateStrict(d, 'EARLY', 5);
+              if (cand) newShifts[cand.id][d] = 'EARLY';
+            }
+            if (!members.some(m => newShifts[m.id][d] === 'LATE')) {
+              let cand = findCandidateStrict(d, 'LATE', 4) || findCandidateStrict(d, 'LATE', 5);
+              if (cand) newShifts[cand.id][d] = 'LATE';
             }
           }
 
-          if (validDays.length === 0) break;
+          daysList.filter(dl => dl.isWeekend).forEach(({ day }) => {
+            const earlyCount = members.filter(m => newShifts[m.id][day] === 'EARLY').length;
+            if (earlyCount < 2) {
+              let cand = findCandidateStrict(day, 'EARLY', 4) || findCandidateStrict(day, 'EARLY', 5);
+              if (cand) newShifts[cand.id][day] = 'EARLY';
+            }
 
-          validDays.sort((a, b) => {
-            const aConsOk = a.cons <= 4 ? 1 : 0;
-            const bConsOk = b.cons <= 4 ? 1 : 0;
-            if (aConsOk !== bConsOk) return bConsOk - aConsOk;
-            if (a.totalWorkingToday !== b.totalWorkingToday) return a.totalWorkingToday - b.totalWorkingToday;
-            return b.day - a.day;
+            const lateCount = members.filter(m => newShifts[m.id][day] === 'LATE').length;
+            if (lateCount < 2) {
+              let cand = findCandidateStrict(day, 'LATE', 4) || findCandidateStrict(day, 'LATE', 5);
+              if (cand) newShifts[cand.id][day] = 'LATE';
+            }
           });
 
-          const targetDay = validDays[0].day;
-          newShifts[m.id][targetDay] = 'MIDDLE';
-          currentWorkCount++;
-        }
-      });
+          // 出勤日数の完全一致処理
+          members.forEach(m => {
+            let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
 
-      members.forEach(m => {
+            while (currentWorkCount < requiredWorkDays) {
+              let validDays = [];
+
+              for (let d = 1; d <= daysInMonth; d++) {
+                if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
+                  const cons = getExactConsecutiveWorkDays(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
+                  const isRev = isReverseShiftBidirectional(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
+
+                  if (!isRev && cons <= 5) {
+              const totalWorkingToday = members.filter(mem => newShifts[mem.id][d] && newShifts[mem.id][d] !== 'OFF').length;
+              validDays.push({ day: d, totalWorkingToday, cons });
+            }
+          }
+        }
+
+        if (validDays.length === 0) break;
+
+        validDays.sort((a, b) => {
+                const aConsOk = a.cons <= 4 ? 1 : 0;
+                const bConsOk = b.cons <= 4 ? 1 : 0;
+                if (aConsOk !== bConsOk) return bConsOk - aConsOk;
+                if (a.totalWorkingToday !== b.totalWorkingToday) return a.totalWorkingToday - b.totalWorkingToday;
+                return b.day - a.day;
+              });
+
+              const targetDay = validDays[0].day;
+              newShifts[m.id][targetDay] = 'MIDDLE';
+              currentWorkCount++;
+            }
+          });
+
+          members.forEach(m => {
         let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
 
         while (currentWorkCount < requiredWorkDays) {
           let openDays = [];
           for (let d = 1; d <= daysInMonth; d++) {
-            if (newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') {
+            if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
               const cons = getExactConsecutiveWorkDays(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
               if (cons <= 5) openDays.push({ day: d, cons });
             }
           }
+          // 希望のない日で空きが見つからない場合のフォールバック
+          if (openDays.length === 0) {
+            for (let d = 1; d <= daysInMonth; d++) {
+              if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
+                openDays.push({ day: d, cons: 99 });
+              }
+            }
+          }
+          // どうしても足りない場合は希望を無視して補填候補にする
           if (openDays.length === 0) {
             for (let d = 1; d <= daysInMonth; d++) {
               if (newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') {
-                openDays.push({ day: d, cons: 99 });
+                openDays.push({ day: d, cons: 999 });
               }
             }
           }
@@ -577,6 +709,15 @@ export default function App() {
               }
             }
           }
+          // 削れる日がない場合は希望を無視して削る候補を探す
+          if (candidatesForRemove.length === 0) {
+            for (let d = 1; d <= daysInMonth; d++) {
+              const shiftType = newShifts[m.id][d];
+              if (shiftType && shiftType !== 'OFF') {
+                candidatesForRemove.push({ day: d, totalWorkingToday: 99 });
+              }
+            }
+          }
           if (candidatesForRemove.length === 0) break;
 
           candidatesForRemove.sort((a, b) => b.totalWorkingToday - a.totalWorkingToday);
@@ -585,46 +726,48 @@ export default function App() {
         }
       });
 
-      members.forEach(m => {
-        for (let d = 1; d <= daysInMonth; d++) {
-          if (!newShifts[m.id][d]) newShifts[m.id][d] = 'OFF';
-        }
-      });
+          members.forEach(m => {
+            for (let d = 1; d <= daysInMonth; d++) {
+              if (!newShifts[m.id][d]) newShifts[m.id][d] = 'OFF';
+            }
+          });
 
-      for (let d = 1; d <= daysInMonth; d++) {
-        const dayShifts = members.map(m => ({ id: m.id, shift: newShifts[m.id][d] }));
-        const earlyMembers = dayShifts.filter(x => x.shift === 'EARLY');
-        const lateMembers = dayShifts.filter(x => x.shift === 'LATE');
+          // 早1・中1・遅1の均衡調整
+          for (let d = 1; d <= daysInMonth; d++) {
+            const dayShifts = members.map(m => ({ id: m.id, shift: newShifts[m.id][d] }));
+            const earlyMembers = dayShifts.filter(x => x.shift === 'EARLY');
+            const lateMembers = dayShifts.filter(x => x.shift === 'LATE');
 
-        if (earlyMembers.length === 1 && lateMembers.length === 2) {
-          const target = lateMembers.find(m => 
-            !currentWishes[m.id]?.[d]?.type && 
-            !isReverseShiftBidirectional(m.id, d, 'MIDDLE', newShifts, prevMonthInfo)
-          ) || lateMembers[1];
-          newShifts[target.id][d] = 'MIDDLE';
-        }
+            if (earlyMembers.length === 1 && lateMembers.length === 2) {
+              const target = lateMembers.find(m => 
+                !currentWishes[m.id]?.[d]?.type && 
+                !isReverseShiftBidirectional(m.id, d, 'MIDDLE', newShifts, prevMonthInfo)
+              ) || lateMembers[1];
+              newShifts[target.id][d] = 'MIDDLE';
+            }
 
-        if (earlyMembers.length === 2 && lateMembers.length === 1) {
-          const target = earlyMembers.find(m => 
-            !currentWishes[m.id]?.[d]?.type && 
-            !isReverseShiftBidirectional(m.id, d, 'MIDDLE', newShifts, prevMonthInfo)
-          ) || earlyMembers[1];
-          newShifts[target.id][d] = 'MIDDLE';
-        }
-      }
+            if (earlyMembers.length === 2 && lateMembers.length === 1) {
+              const target = earlyMembers.find(m => 
+                !currentWishes[m.id]?.[d]?.type && 
+                !isReverseShiftBidirectional(m.id, d, 'MIDDLE', newShifts, prevMonthInfo)
+              ) || earlyMembers[1];
+              newShifts[target.id][d] = 'MIDDLE';
+            }
+          }
 
-      setShiftsForCurrentMonth(newShifts);
-      setIsGenerating(false);
-      showToast(`「6連勤以上絶対禁止＆連勤抑制」「月曜始まりカレンダー」で作成完了！`);
-    }, 500);
-  };
+          setShiftsForCurrentMonth(newShifts);
+          setIsGenerating(false);
+          showToast(`「6連勤以上絶対禁止＆前日より早い出勤回避」で作成完了！`);
+        }, 500);
+      };
 
-  const warnings = useMemo(() => {
+      const warnings = useMemo(() => {
     const list = [];
     const prevMonthInfo = getPrevMonthLastDaysShifts();
 
     members.forEach(m => {
       const memberShifts = currentShifts[m.id] || {};
+      const memberWishes = currentWishes[m.id] || {};
       const actualDays = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
 
       if (actualDays !== requiredWorkDays) {
@@ -632,14 +775,28 @@ export default function App() {
           type: 'EXACT_DAYS_MISMATCH',
           severity: 'danger',
           memberName: m.name,
+          memberId: m.id,
           message: `【必須日数不一致】${m.name}: 現在 ${actualDays}日出勤 （必須 ${requiredWorkDays}日）`
         });
       }
 
       let consecutiveWork = prevMonthInfo?.[m.id]?.consecutiveWorkAtEnd || 0;
       for (let d = 1; d <= daysInMonth; d++) {
-        const current = memberShifts[d];
+        const current = memberShifts[d] || 'OFF';
         const prev = d > 1 ? memberShifts[d - 1] : prevMonthInfo?.[m.id]?.lastDayShift;
+        const wishType = memberWishes[d]?.type;
+
+        // 希望不一致のアラート
+        if (wishType && current !== wishType) {
+          list.push({
+            type: 'WISH_MISMATCH',
+            severity: 'warning',
+            memberName: m.name,
+            memberId: m.id,
+            day: d,
+            message: `【希望不一致】${m.name}: ${d}日は「${SHIFT_TYPES[wishType]?.label}」希望ですが、「${SHIFT_TYPES[current]?.label || '休み'}」になっています`
+          });
+        }
 
         if (current && current !== 'OFF') {
           consecutiveWork++;
@@ -648,6 +805,8 @@ export default function App() {
               type: 'CONSECUTIVE_5',
               severity: 'warning',
               memberName: m.name,
+              memberId: m.id,
+              day: d,
               message: `【注意: 5連勤】${m.name}: ${d}日時点で 5連勤が発生（4連勤以下推奨）`
             });
           } else if (consecutiveWork >= 6) {
@@ -655,6 +814,8 @@ export default function App() {
               type: 'CONSECUTIVE_6',
               severity: 'danger',
               memberName: m.name,
+              memberId: m.id,
+              day: d,
               message: `【禁止違反: 6連勤以上】${m.name}: ${d}日時点で 通算 ${consecutiveWork}連勤`
             });
           }
@@ -662,12 +823,18 @@ export default function App() {
           consecutiveWork = 0;
         }
 
-        if (prev === 'LATE' && (current === 'EARLY' || current === 'MIDDLE')) {
+        // 前日より早い出勤（中→早、遅→中、遅→早）を検知
+        if (isShiftEarlierThan(prev, current)) {
+          const prevLabel = SHIFT_TYPES[prev]?.label || '勤務';
+          const curLabel = SHIFT_TYPES[current]?.label || '勤務';
+          const prevDayText = d - 1 === 0 ? '前月最終日' : `${d - 1}日`;
           list.push({
-            type: 'REVERSE_SHIFT',
+            type: 'EARLIER_SHIFT',
             severity: 'danger',
             memberName: m.name,
-            message: `【逆シフト検出】${m.name}: ${d - 1 === 0 ? '前月最終日' : (d - 1) + '日'}(遅番) → ${d}日(${SHIFT_TYPES[current]?.label})`
+            memberId: m.id,
+            day: d,
+            message: `【前日より早い出勤】${m.name}: ${prevDayText}(${prevLabel}) → ${d}日(${curLabel}) [休息不足注意]`
           });
         }
       }
@@ -676,91 +843,90 @@ export default function App() {
     daysList.forEach(({ day, dayOfWeek }) => {
       const dayShifts = members.map(m => currentShifts[m.id]?.[day]);
       const earlyCount = dayShifts.filter(s => s === 'EARLY').length;
-      const middleCount = dayShifts.filter(s => s === 'MIDDLE').length;
-      const lateCount = dayShifts.filter(s => s === 'LATE').length;
-      const totalWorking = dayShifts.filter(s => s && s !== 'OFF').length;
+          const middleCount = dayShifts.filter(s => s === 'MIDDLE').length;
+          const lateCount = dayShifts.filter(s => s === 'LATE').length;
+          const totalWorking = dayShifts.filter(s => s && s !== 'OFF').length;
 
-      if (totalWorking === 0) {
-        list.push({
-          type: 'ZERO_STAFF',
-          severity: 'danger',
-          message: `【無人警告】${day}日(${dayOfWeek}): 出勤者が0名です`
+          if (totalWorking === 0) {
+            list.push({
+              type: 'ZERO_STAFF',
+              severity: 'danger',
+              message: `【無人警告】${day}日(${dayOfWeek}): 出勤者が0名です`
+            });
+          } else if (earlyCount === 0 || lateCount === 0) {
+            list.push({
+              type: 'SHORTAGE',
+              severity: 'warning',
+              message: `${day}日(${dayOfWeek}): 早番 ${earlyCount}名 / 遅番 ${lateCount}名 （両方1名以上必須）`
+            });
+          }
+
+          if ((earlyCount === 1 && lateCount === 2 && middleCount === 0) || (earlyCount === 2 && lateCount === 1 && middleCount === 0)) {
+            list.push({
+              type: 'UNBALANCED_PATTERN',
+              severity: 'warning',
+              message: `${day}日(${dayOfWeek}): 早${earlyCount}・遅${lateCount}の不均衡シフト（「早1・中1・遅1」を推奨）`
+            });
+          }
         });
-      } else if (earlyCount === 0 || lateCount === 0) {
-        list.push({
-          type: 'SHORTAGE',
-          severity: 'warning',
-          message: `${day}日(${dayOfWeek}): 早番 ${earlyCount}名 / 遅番 ${lateCount}名 （両方1名以上必須）`
-        });
-      }
 
-      if ((earlyCount === 1 && lateCount === 2 && middleCount === 0) || (earlyCount === 2 && lateCount === 1 && middleCount === 0)) {
-        list.push({
-          type: 'UNBALANCED_PATTERN',
-          severity: 'warning',
-          message: `${day}日(${dayOfWeek}): 早${earlyCount}・遅${lateCount}の不均衡シフト（「早1・中1・遅1」を推奨）`
-        });
-      }
-    });
+        return list;
+      }, [members, currentShifts, daysInMonth, daysList, requiredWorkDays, currentKey, allMonthlyData]);
 
-    return list;
-  }, [members, currentShifts, daysInMonth, daysList, requiredWorkDays, currentKey, allMonthlyData]);
-
-  const handleShiftChange = (memberId, day, shiftTypeId) => {
-    const updated = {
-      ...currentShifts,
-      [memberId]: {
-        ...(currentShifts[memberId] || {}),
-        [day]: shiftTypeId
-      }
-    };
-    setShiftsForCurrentMonth(updated);
-    setSelectedCell(null);
-  };
-
-  const exportToCsv = () => {
-    const headers = ['スタッフ名', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '休み'];
-    const rows = members.map(m => {
-      const memberShifts = currentShifts[m.id] || {};
-      const daysData = daysList.map(d => SHIFT_TYPES[memberShifts[d.day]]?.label || '休み');
-      const workCount = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
-      const earlyCount = Object.values(memberShifts).filter(s => s === 'EARLY').length;
-      const middleCount = Object.values(memberShifts).filter(s => s === 'MIDDLE').length;
-      const lateCount = Object.values(memberShifts).filter(s => s === 'LATE').length;
-      const offCount = Object.values(memberShifts).filter(s => s === 'OFF').length;
-      return [m.name, ...daysData, workCount, earlyCount, middleCount, lateCount, offCount];
-    });
-
-    const csvContent = '\uFEFF' + [headers, ...rows].map(e => e.map(cell => `"${cell}"`).join(',')).join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `Shift_${year}_${String(month).padStart(2, '0')}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast('CSVファイルをダウンロードしました');
-  };
-
-  // AI診断プロンプトとレスポンスの整理
-  const analyzeShiftsWithAI = async () => {
-    setIsAiAnalyzing(true);
-    try {
-      const summaryData = {
-        month: `${year}年${month}月`,
-        requiredDays: requiredWorkDays,
-        members: members.map(m => {
-          const mShifts = currentShifts[m.id] || {};
-          const workDays = Object.values(mShifts).filter(s => s && s !== 'OFF').length;
-          const shiftsDetail = daysList.map(d => `${d.day}日:${SHIFT_TYPES[mShifts[d.day]]?.short || '休'}`).join(', ');
-          return { name: m.name, workDays, schedule: shiftsDetail };
-        }),
-        warningsCount: warnings.length,
-        warningList: warnings.map(w => w.message)
+      const handleShiftChange = (memberId, day, shiftTypeId) => {
+        const updated = {
+          ...currentShifts,
+          [memberId]: {
+            ...(currentShifts[memberId] || {}),
+            [day]: shiftTypeId
+          }
+        };
+        setShiftsForCurrentMonth(updated);
+        setSelectedCell(null);
       };
 
-      const prompt = `以下の店舗シフトデータを分析してください。
+      const exportToCsv = () => {
+        const headers = ['スタッフ名', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '休み'];
+        const rows = members.map(m => {
+          const memberShifts = currentShifts[m.id] || {};
+          const daysData = daysList.map(d => SHIFT_TYPES[memberShifts[d.day]]?.label || '休み');
+          const workCount = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
+          const earlyCount = Object.values(memberShifts).filter(s => s === 'EARLY').length;
+          const middleCount = Object.values(memberShifts).filter(s => s === 'MIDDLE').length;
+          const lateCount = Object.values(memberShifts).filter(s => s === 'LATE').length;
+          const offCount = Object.values(memberShifts).filter(s => s === 'OFF').length;
+          return [m.name, ...daysData, workCount, earlyCount, middleCount, lateCount, offCount];
+        });
+
+        const csvContent = '\uFEFF' + [headers, ...rows].map(e => e.map(cell => `"${cell}"`).join(',')).join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `Shift_${year}_${String(month).padStart(2, '0')}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showToast('CSVファイルをダウンロードしました');
+      };
+
+      const analyzeShiftsWithAI = async () => {
+        setIsAiAnalyzing(true);
+        try {
+          const summaryData = {
+            month: `${year}年${month}月`,
+            requiredDays: requiredWorkDays,
+            members: members.map(m => {
+              const mShifts = currentShifts[m.id] || {};
+              const workDays = Object.values(mShifts).filter(s => s && s !== 'OFF').length;
+              const shiftsDetail = daysList.map(d => `${d.day}日:${SHIFT_TYPES[mShifts[d.day]]?.short || '休'}`).join(', ');
+              return { name: m.name, workDays, schedule: shiftsDetail };
+            }),
+            warningsCount: warnings.length,
+            warningList: warnings.map(w => w.message)
+          };
+
+          const prompt = `以下の店舗シフトデータを分析してください。
 
 【出力時の厳格ルール】
 ・アスタリスク（*）やハッシュ（#）、アンダースコア（_）などのマークダウン装飾記号は一切使用しないでください。
@@ -770,7 +936,7 @@ export default function App() {
 
 【評価内容】
 1. 出勤日数の完全一致（目標: ${requiredWorkDays}日）
-2. 逆シフトの有無（0件評価）
+2. 前日より早い出勤（中→早、遅→中、遅→早）の有無
 3. 連勤（6連勤以上絶対禁止、4連勤以下の維持）
 4. 週2日休みのペースとカレンダー前後のバランス
 
@@ -778,274 +944,296 @@ export default function App() {
 ${JSON.stringify(summaryData, null, 2)}
 `;
 
-      const response = await callGeminiApi({
-        contents: [{ parts: [{ text: prompt }] }],
-        systemInstruction: { parts: [{ text: "あなたはシフト作成の熟練店舗コンサルタントAIです。アスタリスクやハッシュなどの記号を使わず、見出しには【】や■を使い、箇条書きには「・」を用いて、きれいに整った日本語で分かりやすく回答してください。" }] }
-      });
+          const response = await callGeminiApi({
+            contents: [{ parts: [{ text: prompt }] }],
+            systemInstruction: { parts: [{ text: "あなたはシフト作成の熟練店舗コンサルタントAIです。アスタリスクやハッシュなどの記号を使わず、見出しには【】や■を使い、箇条書きには「・」を用いて、きれいに整った日本語で分かりやすく回答してください。" }] }
+          }, userApiKey);
 
-      const rawText = response?.candidates?.[0]?.content?.parts?.[0]?.text || "分析結果を取得できませんでした。";
-      setAiAnalysisResult(cleanAiText(rawText));
-      showToast("AIによる分析が完了しました！");
-    } catch (error) {
-      showToast("AI分析でエラーが発生しました。");
-    } finally {
-      setIsAiAnalyzing(false);
-    }
-  };
+          const rawText = response?.candidates?.[0]?.content?.parts?.[0]?.text || "分析結果を取得できませんでした。";
+          setAiAnalysisResult(cleanAiText(rawText));
+          showToast("AIによる分析が完了しました！");
+        } catch (error) {
+          console.error(error);
+          showToast("AI分析でエラーが発生しました。設定でAPIキーをご確認ください。");
+        } finally {
+          setIsAiAnalyzing(false);
+        }
+      };
 
-  const handleAddMember = () => {
-    if (!newMemberName.trim()) return;
-    const newId = 'm_' + Date.now();
-    setMembers([...members, { id: newId, name: newMemberName.trim() }]);
-    setNewMemberName('');
-    showToast(`${newMemberName.trim()} さんを追加しました`);
-  };
+      const handleAddMember = () => {
+        if (!newMemberName.trim()) return;
+        const newId = 'm_' + Date.now();
+        setMembers([...members, { id: newId, name: newMemberName.trim() }]);
+        setNewMemberName('');
+        showToast(`${newMemberName.trim()} さんを追加しました`);
+      };
 
-  const handleDeleteMember = (id, name) => {
-    if (members.length <= 2) {
-      showToast('最低2名のスタッフが必要です');
-      return;
-    }
-    setMembers(members.filter(m => m.id !== id));
-    showToast(`${name} を削除しました`);
-  };
+      const handleDeleteMember = (id, name) => {
+        if (members.length <= 2) {
+          showToast('最低2名のスタッフが必要です');
+          return;
+        }
+        setMembers(members.filter(m => m.id !== id));
+        showToast(`${name} を削除しました`);
+      };
 
-  const handleUpdateMemberName = (id) => {
-    if (!editingMemberName.trim()) return;
-    setMembers(members.map(m => m.id === id ? { ...m, name: editingMemberName.trim() } : m));
-    setEditingMemberId(null);
-    setEditingMemberName('');
-    showToast('スタッフ名を更新しました');
-  };
+      const handleUpdateMemberName = (id) => {
+        if (!editingMemberName.trim()) return;
+        setMembers(members.map(m => m.id === id ? { ...m, name: editingMemberName.trim() } : m));
+        setEditingMemberId(null);
+        setEditingMemberName('');
+        showToast('スタッフ名を更新しました');
+      };
 
-  return (
-    <div className={`min-h-screen font-sans ${darkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
-      
-      {/* ヘッダー */}
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-white/85 dark:bg-slate-900/85 border-b border-slate-200 dark:border-slate-800 px-4 py-3 shadow-2xs">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+      const handleSaveApiKey = (key) => {
+        setUserApiKey(key);
+        localStorage.setItem('shift_gemini_api_key', key);
+        showToast('APIキーをブラウザに保存しました');
+      };
+
+      return (
+        <div className={`min-h-screen font-sans ${darkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
           
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-gradient-to-tr from-pink-500 to-amber-500 rounded-xl text-white shadow-md">
-              <Calendar className="w-5 h-5" />
+          {/* ヘッダー */}
+          <header className="sticky top-0 z-30 backdrop-blur-md bg-white/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 px-4 py-3 shadow-sm">
+            <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+              
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-gradient-to-tr from-pink-500 to-amber-500 rounded-xl text-white shadow-md">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h1 className="text-lg font-extrabold leading-tight tracking-tight bg-gradient-to-r from-pink-600 to-amber-600 bg-clip-text text-transparent">Smart Shift AI Pro</h1>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">6連勤禁止・早い出勤回避・月曜始まりカレンダー・きれいなAI診断</p>
+                </div>
+              </div>
+
+              {/* 年月切り替え */}
+              <div className="flex items-center space-x-2 bg-pink-50/80 dark:bg-pink-950/40 border border-pink-200 dark:border-pink-800/60 px-3 py-1.5 rounded-xl shadow-sm">
+                <button
+                  onClick={() => handleMonthChange(year, month - 1)}
+                  className="p-1 hover:bg-pink-200/60 dark:hover:bg-pink-800/60 rounded-lg transition-colors"
+                  title="前月"
+                >
+                  <ChevronLeft className="w-4 h-4 text-pink-700 dark:text-pink-300" />
+                </button>
+                
+                <div className="text-center px-1">
+                  <span className="text-xs font-semibold text-pink-900 dark:text-pink-200 block">{year}年</span>
+                  <span className="text-base font-black text-pink-700 dark:text-pink-300 leading-none">{month}月</span>
+                </div>
+
+                <button
+                  onClick={() => handleMonthChange(year, month + 1)}
+                  className="p-1 hover:bg-pink-200/60 dark:hover:bg-pink-800/60 rounded-lg transition-colors"
+                  title="翌月"
+                >
+                  <ChevronRight className="w-4 h-4 text-pink-700 dark:text-pink-300" />
+                </button>
+
+                <button
+                  onClick={() => {
+                    const now = new Date();
+                    handleMonthChange(now.getFullYear(), now.getMonth() + 1);
+                  }}
+                  className="ml-1 text-[11px] px-2 py-0.5 bg-pink-200/70 dark:bg-pink-800/70 text-pink-800 dark:text-pink-200 font-bold rounded-md hover:bg-pink-300 transition-colors"
+                >
+                  今月
+                </button>
+              </div>
+
+              {/* ボタン操作 */}
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={generateAutoShifts}
+                  disabled={isGenerating}
+                  className="flex items-center space-x-1.5 bg-gradient-to-r from-pink-500 to-amber-500 hover:from-pink-600 hover:to-amber-600 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-md shadow-pink-500/20 active:scale-95 transition-all disabled:opacity-50"
+                >
+                  <Sparkles className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
+                  <span>{isGenerating ? 'シフト自動生成中...' : 'AI自動シフト生成'}</span>
+                </button>
+
+                <button
+                  onClick={exportToCsv}
+                  className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700"
+                  title="CSV出力"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+
+                <button
+                  onClick={() => setDarkMode(!darkMode)}
+                  className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700"
+                  title={darkMode ? 'ライトモード' : 'ダークモード'}
+                >
+                  {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
+                </button>
+              </div>
+
             </div>
-            <div>
-              <h1 className="text-lg font-extrabold leading-tight tracking-tight bg-gradient-to-r from-pink-600 to-amber-600 bg-clip-text text-transparent">Smart Shift AI Pro</h1>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">6連勤以上絶対禁止・月曜始まりカレンダー・きれいなAI診断</p>
+          </header>
+
+          {/* タブナビゲーション */}
+          <nav className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sticky top-[57px] z-20 shadow-sm">
+            <div className="max-w-7xl mx-auto flex space-x-1 overflow-x-auto scrollbar-none py-1.5">
+              <button
+                onClick={() => setActiveTab('matrix')}
+                className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                  activeTab === 'matrix'
+                    ? 'bg-pink-500 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Calendar className="w-4 h-4" />
+                <span>シフト表 (一覧)</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('wishes')}
+                className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                  activeTab === 'wishes'
+                    ? 'bg-pink-500 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <UserCheck className="w-4 h-4" />
+                <span>希望シフト (月曜始まりカレンダー)</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('warnings')}
+                className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                  activeTab === 'warnings'
+                    ? 'bg-pink-500 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>ルール検証</span>
+                {warnings.length > 0 && (
+                  <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-rose-500 text-white font-extrabold animate-pulse">
+                    {warnings.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('ai')}
+                className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                  activeTab === 'ai'
+                    ? 'bg-gradient-to-r from-purple-600 to-pink-500 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Brain className="w-4 h-4" />
+                <span>AIアドバイス</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('members')}
+                className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                  activeTab === 'members'
+                    ? 'bg-pink-500 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Settings className="w-4 h-4" />
+                <span>スタッフ管理</span>
+              </button>
             </div>
-          </div>
+          </nav>
 
-          {/* 年月切り替え */}
-          <div className="flex items-center space-x-2 bg-pink-50/80 dark:bg-pink-950/40 border border-pink-200 dark:border-pink-800/60 px-3 py-1.5 rounded-xl shadow-2xs">
-            <button
-              onClick={() => handleMonthChange(year, month - 1)}
-              className="p-1 hover:bg-pink-200/60 dark:hover:bg-pink-800/60 rounded-lg transition-colors"
-              title="前月"
-            >
-              <ChevronLeft className="w-4 h-4 text-pink-700 dark:text-pink-300" />
-            </button>
-            
-            <div className="text-center px-1">
-              <span className="text-xs font-semibold text-pink-900 dark:text-pink-200 block">{year}年</span>
-              <span className="text-base font-black text-pink-700 dark:text-pink-300 leading-none">{month}月</span>
-            </div>
+          <main className="max-w-7xl mx-auto p-4 space-y-4">
 
-            <button
-              onClick={() => handleMonthChange(year, month + 1)}
-              className="p-1 hover:bg-pink-200/60 dark:hover:bg-pink-800/60 rounded-lg transition-colors"
-              title="翌月"
-            >
-              <ChevronRight className="w-4 h-4 text-pink-700 dark:text-pink-300" />
-            </button>
-
-            <button
-              onClick={() => {
-                const now = new Date();
-                handleMonthChange(now.getFullYear(), now.getMonth() + 1);
-              }}
-              className="ml-1 text-[11px] px-2 py-0.5 bg-pink-200/70 dark:bg-pink-800/70 text-pink-800 dark:text-pink-200 font-bold rounded-md hover:bg-pink-300 transition-colors"
-            >
-              今月
-            </button>
-          </div>
-
-          {/* ボタン操作 */}
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={generateAutoShifts}
-              disabled={isGenerating}
-              className="flex items-center space-x-1.5 bg-gradient-to-r from-pink-500 to-amber-500 hover:from-pink-600 hover:to-amber-600 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-md shadow-pink-500/20 active:scale-95 transition-all disabled:opacity-50"
-            >
-              <Sparkles className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
-              <span>{isGenerating ? 'シフト自動生成中...' : 'AI自動シフト生成'}</span>
-            </button>
-
-            <button
-              onClick={exportToCsv}
-              className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700"
-              title="CSV出力"
-            >
-              <Download className="w-4 h-4" />
-            </button>
-
-            <button
-              onClick={() => setDarkMode(!darkMode)}
-              className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700"
-              title={darkMode ? 'ライトモード' : 'ダークモード'}
-            >
-              {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
-            </button>
-          </div>
-
-        </div>
-      </header>
-
-      {/* タブナビゲーション */}
-      <nav className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sticky top-[57px] z-20">
-        <div className="max-w-7xl mx-auto flex space-x-1 overflow-x-auto scrollbar-none py-1.5">
-          <button
-            onClick={() => setActiveTab('matrix')}
-            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeTab === 'matrix'
-                ? 'bg-pink-500 text-white shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <Calendar className="w-4 h-4" />
-            <span>シフト表 (一覧)</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('wishes')}
-            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeTab === 'wishes'
-                ? 'bg-pink-500 text-white shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <UserCheck className="w-4 h-4" />
-            <span>希望シフト (月曜始まりカレンダー)</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('warnings')}
-            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeTab === 'warnings'
-                ? 'bg-pink-500 text-white shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>ルール検証</span>
-            {warnings.length > 0 && (
-              <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-rose-500 text-white font-extrabold animate-pulse">
-                {warnings.length}
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => setActiveTab('ai')}
-            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeTab === 'ai'
-                ? 'bg-gradient-to-r from-purple-600 to-pink-500 text-white shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <Brain className="w-4 h-4" />
-            <span>AIアドバイス</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('members')}
-            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              activeTab === 'members'
-                ? 'bg-pink-500 text-white shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <Settings className="w-4 h-4" />
-            <span>スタッフ設定</span>
-          </button>
-        </div>
-      </nav>
-
-      {/* メインエリア */}
-      <main className="max-w-7xl mx-auto p-4 space-y-4">
-
-        {/* 1. シフト表 (マトリクス) タブ */}
+            {/* 1. シフト表 (マトリクス) タブ */}
         {activeTab === 'matrix' && (
           <div className="space-y-4">
             
             {/* 凡例 ＆ 条件ルールカード */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div className="md:col-span-3 bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-2xs flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="font-bold text-slate-500 dark:text-slate-400 mr-1 text-[11px]">区分:</span>
-                  {Object.values(SHIFT_TYPES).map(st => (
-                    <div key={st.id} className={`px-2 py-1 rounded-lg border text-xs font-semibold ${st.bg} ${st.text} ${st.border} flex items-center space-x-1`}>
-                      <span className="font-extrabold">{st.short}</span>
-                      <span className="text-[10px] opacity-80">({st.label})</span>
+              <div className="md:col-span-3 bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="font-bold text-slate-500 dark:text-slate-400 mr-1 text-[11px]">区分:</span>
+                      {Object.values(SHIFT_TYPES).map(st => (
+                        <div key={st.id} className={`px-2 py-1 rounded-lg border text-xs font-semibold ${st.bg} ${st.text} ${st.border} flex items-center space-x-1`}>
+                          <span className="font-extrabold">{st.short}</span>
+                          <span className="text-[10px] opacity-80">({st.label})</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                <div className="flex items-center space-x-2 text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 px-2.5 py-1 rounded-xl">
-                  <Info className="w-3.5 h-3.5 text-pink-500" />
-                  <span>6連勤以上絶対禁止｜基本4連勤以下｜「早1中1遅1」優先</span>
-                </div>
-              </div>
+                    
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex items-center space-x-2 text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-100 dark:border-slate-700/60 hidden sm:flex">
+                        <Info className="w-3.5 h-3.5 text-pink-500" />
+                        <span>6連勤禁止｜早い出勤(中→早/遅→中/遅→早)回避｜「早1中1遅1」優先</span>
+                      </div>
+                      
+                      <button
+                        onClick={() => setViewScale(v => v === 'normal' ? 'compact' : 'normal')}
+                        className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors shadow-sm ${
+                          viewScale === 'compact'
+                            ? 'bg-pink-50 dark:bg-pink-900/30 border-pink-200 dark:border-pink-800/60 text-pink-700 dark:text-pink-300'
+                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
+                        }`}
+                        title="シフト表の表示倍率を切り替えます"
+                      >
+                        {viewScale === 'compact' ? <ZoomIn className="w-3.5 h-3.5" /> : <ZoomOut className="w-3.5 h-3.5" />}
+                        <span>{viewScale === 'compact' ? '通常倍率に戻す' : '全体を一覧 (縮小)'}</span>
+                      </button>
+                    </div>
+                  </div>
 
-              <div className="bg-gradient-to-br from-pink-50 to-amber-50 dark:from-slate-800 dark:to-slate-800/80 rounded-2xl p-3 border border-pink-200/70 dark:border-slate-700 shadow-2xs flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">必須出勤日数</span>
-                  <span className="text-xl font-black text-pink-600 dark:text-pink-400">{requiredWorkDays} 日</span>
-                </div>
-                <div className="text-right">
+                  <div className="bg-gradient-to-br from-pink-50 to-amber-50 dark:from-slate-800 dark:to-slate-800/80 rounded-2xl p-3 border border-pink-200/70 dark:border-slate-700 shadow-sm flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">必須出勤日数</span>
+                      <span className="text-xl font-black text-pink-600 dark:text-pink-400">{requiredWorkDays} 日</span>
+                    </div>
+                    <div className="text-right">
                   <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">登録人数</span>
                   <span className="text-xl font-black text-slate-800 dark:text-slate-200">{members.length} 名</span>
                 </div>
               </div>
             </div>
 
-            {/* シフト表 */}
+            {/* シフト表テーブル */}
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md overflow-hidden">
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" style={{ zoom: viewScale === 'compact' ? 0.75 : 1 }}>
                 <table className="w-full border-collapse text-xs text-left">
                   <thead>
                     <tr className="bg-slate-100/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700">
-                      <th className="sticky left-0 z-10 bg-slate-100 dark:bg-slate-900 p-2.5 font-extrabold text-slate-700 dark:text-slate-200 min-w-[110px] shadow-xs">
-                        スタッフ名
-                      </th>
-                      {daysList.map(d => (
-                        <th
-                          key={d.day}
-                          className={`p-1.5 text-center min-w-[36px] font-bold border-l border-slate-200/60 dark:border-slate-700/60 ${
-                            d.isSunday
-                              ? 'bg-rose-50/70 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400'
-                              : d.isSaturday
-                              ? 'bg-sky-50/70 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400'
-                              : 'text-slate-600 dark:text-slate-300'
-                          }`}
-                        >
-                          <div>{d.day}</div>
-                          <div className="text-[10px] font-normal">{d.dayOfWeek}</div>
-                        </th>
-                      ))}
-                      <th className="p-2 text-center font-extrabold text-slate-700 dark:text-slate-200 min-w-[60px] bg-slate-200/50 dark:bg-slate-800/80 border-l border-slate-300 dark:border-slate-700">
-                        出勤数
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-700/60">
-                    {members.map(m => {
-                      const memberShifts = currentShifts[m.id] || {};
-                      const memberWishes = currentWishes[m.id] || {};
-                      const actualWorkDays = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
-                      const isMatchRequired = actualWorkDays === requiredWorkDays;
+                          <th className="sticky left-0 z-10 bg-slate-100 dark:bg-slate-900 p-2.5 font-extrabold text-slate-700 dark:text-slate-200 min-w-[110px] shadow-sm">
+                            スタッフ名
+                          </th>
+                          {daysList.map(d => (
+                            <th
+                              key={d.day}
+                              className={`p-1.5 text-center min-w-[36px] font-bold border-l border-slate-200/60 dark:border-slate-700/60 ${
+                                d.isSunday
+                                  ? 'bg-rose-50/70 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400'
+                                  : d.isSaturday
+                                  ? 'bg-sky-50/70 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400'
+                                  : 'text-slate-600 dark:text-slate-300'
+                              }`}
+                            >
+                              <div>{d.day}</div>
+                              <div className="text-[10px] font-normal">{d.dayOfWeek}</div>
+                            </th>
+                          ))}
+                          <th className="p-2 text-center font-extrabold text-slate-700 dark:text-slate-200 min-w-[60px] bg-slate-200/50 dark:bg-slate-800/80 border-l border-slate-300 dark:border-slate-700">
+                            出勤数
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-700/60">
+                        {members.map(m => {
+                          const memberShifts = currentShifts[m.id] || {};
+                          const memberWishes = currentWishes[m.id] || {};
+                          const actualWorkDays = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
+                          const isMatchRequired = actualWorkDays === requiredWorkDays;
 
-                      return (
-                        <tr key={m.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/40 transition-colors">
-                          <td className="sticky left-0 z-10 bg-white dark:bg-slate-800 p-2.5 font-bold text-slate-800 dark:text-slate-100 truncate max-w-[120px] shadow-xs">
+                          return (
+                            <tr key={m.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/40 transition-colors">
+                              <td className="sticky left-0 z-10 bg-white dark:bg-slate-800 p-2.5 font-bold text-slate-800 dark:text-slate-100 truncate max-w-[120px] shadow-sm">
                             {m.name}
                           </td>
                           {daysList.map(d => {
@@ -1053,13 +1241,25 @@ ${JSON.stringify(summaryData, null, 2)}
                             const shift = SHIFT_TYPES[shiftId] || SHIFT_TYPES.OFF;
                             const wish = memberWishes[d.day];
 
+                            // セルのアラート状態を確認
+                            const cellWarnings = warnings.filter(w => w.memberId === m.id && w.day === d.day);
+                            const hasDanger = cellWarnings.some(w => w.severity === 'danger');
+                            const hasWarning = cellWarnings.some(w => w.severity === 'warning');
+                            
+                            let alertClass = "";
+                            if (hasDanger) {
+                              alertClass = "ring-2 ring-rose-500 ring-offset-1 bg-rose-50 dark:bg-rose-900/40 animate-pulse";
+                            } else if (hasWarning) {
+                              alertClass = "ring-2 ring-amber-400 ring-offset-1 bg-amber-50 dark:bg-amber-900/40 animate-pulse";
+                            }
+
                             return (
                               <td
                                 key={d.day}
                                 onClick={() => setSelectedCell({ memberId: m.id, memberName: m.name, day: d.day, dayOfWeek: d.dayOfWeek, currentShift: shiftId })}
                                 className="p-1 text-center border-l border-slate-100 dark:border-slate-700/40 cursor-pointer hover:opacity-80 transition-opacity relative"
                               >
-                                <div className={`py-1 rounded-md text-xs font-bold border ${shift.bg} ${shift.text} ${shift.border} shadow-2xs`}>
+                                <div className={`py-1 rounded-md text-xs font-bold border ${shift.bg} ${shift.text} ${shift.border} shadow-sm ${alertClass}`}>
                                   {shift.short}
                                 </div>
                                 {wish && (
@@ -1069,469 +1269,583 @@ ${JSON.stringify(summaryData, null, 2)}
                             );
                           })}
                           <td className="p-2 text-center font-black bg-slate-50/50 dark:bg-slate-800/40 border-l border-slate-200 dark:border-slate-700">
-                            <span className={`inline-block px-1.5 py-0.5 rounded-md ${
-                              isMatchRequired 
-                                ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50' 
-                                : 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 font-black animate-pulse'
-                            }`}>
-                              {actualWorkDays}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                                <span className={`inline-block px-1.5 py-0.5 rounded-md ${
+                                  isMatchRequired 
+                                    ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50' 
+                                    : 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 font-black animate-pulse'
+                                }`}>
+                                  {actualWorkDays}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
 
-                    {/* 日別出勤人数 */}
-                    <tr className="bg-slate-100/90 dark:bg-slate-900/90 border-t-2 border-slate-300 dark:border-slate-700 font-bold text-[11px]">
-                      <td className="sticky left-0 z-10 bg-slate-100 dark:bg-slate-900 p-2 text-slate-700 dark:text-slate-300 shadow-xs">
-                        出勤合計
-                      </td>
-                      {daysList.map(d => {
-                        const dayShifts = members.map(m => currentShifts[m.id]?.[d.day]);
-                        const totalWorking = dayShifts.filter(s => s && s !== 'OFF').length;
-                        const earlyCount = dayShifts.filter(s => s === 'EARLY').length;
-                        const lateCount = dayShifts.filter(s => s === 'LATE').length;
-                        const isShortage = totalWorking === 0 || earlyCount === 0 || lateCount === 0;
-
-                        return (
-                          <td
-                            key={d.day}
-                            className={`p-1 text-center border-l border-slate-200 dark:border-slate-700 ${
-                              isShortage ? 'bg-rose-100/60 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 font-extrabold' : 'text-slate-700 dark:text-slate-300'
-                            }`}
-                          >
-                            <div>{totalWorking}名</div>
+                        {/* 日別出勤合計 */}
+                        <tr className="bg-slate-100/90 dark:bg-slate-900/90 border-t-2 border-slate-300 dark:border-slate-700 font-bold text-[11px]">
+                          <td className="sticky left-0 z-10 bg-slate-100 dark:bg-slate-900 p-2 text-slate-700 dark:text-slate-300 shadow-sm">
+                            出勤合計
                           </td>
-                        );
-                      })}
-                      <td className="bg-slate-200/60 dark:bg-slate-800 border-l border-slate-300 dark:border-slate-700"></td>
+                          {daysList.map(d => {
+                            const dayShifts = members.map(m => currentShifts[m.id]?.[d.day]);
+                            const totalWorking = dayShifts.filter(s => s && s !== 'OFF').length;
+                            const earlyCount = dayShifts.filter(s => s === 'EARLY').length;
+                            const lateCount = dayShifts.filter(s => s === 'LATE').length;
+                            const isShortage = totalWorking === 0 || earlyCount === 0 || lateCount === 0;
+
+                            return (
+                              <td
+                                key={d.day}
+                                className={`p-1 text-center border-l border-slate-200 dark:border-slate-700 ${
+                                  isShortage ? 'bg-rose-100/60 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 font-extrabold' : 'text-slate-700 dark:text-slate-300'
+                                }`}
+                              >
+                                <div>{totalWorking}名</div>
+                              </td>
+                            );
+                          })}
+                          <td className="bg-slate-200/60 dark:bg-slate-800 border-l border-slate-300 dark:border-slate-700"></td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             </div>
+
+            {/* シフト表上で直接確認できるルール検証サマリー（表の下に移動） */}
+            <div className={`rounded-2xl p-3.5 border transition-all ${
+              warnings.length === 0
+                ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60'
+                : 'bg-rose-50/80 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/60'
+            }`}>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center space-x-2.5">
+                  {warnings.length === 0 ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0" />
+                  )}
+                  <div>
+                    <span className={`text-xs font-black ${warnings.length === 0 ? 'text-emerald-800 dark:text-emerald-200' : 'text-rose-800 dark:text-rose-200'}`}>
+                      {warnings.length === 0 ? '全ルール点検クリア (出勤日数・連勤・早い出勤・希望の一致の違反なし)' : `ルール点検アラート (${warnings.length}件検出)`}
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+                      {warnings.length === 0
+                        ? '中→早・遅→中・遅→早や6連勤以上、希望との不一致は発生していません'
+                        : '以下の項目に改善が必要です（該当セルは赤枠・黄枠で強調されています）'}
+                    </span>
+                  </div>
+                </div>
+                
+                {warnings.length > 0 && (
+                  <button
+                    onClick={() => setActiveTab('warnings')}
+                    className="text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:underline px-2 py-1 bg-white/70 dark:bg-slate-900/60 rounded-lg border border-rose-200 dark:border-rose-800"
+                  >
+                    詳細ルールタブへ →
+                  </button>
+                )}
+              </div>
+
+              {warnings.length > 0 && (
+                <div className="mt-2.5 pt-2 border-t border-rose-200/60 dark:border-rose-800/50 space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                  {warnings.slice(0, 5).map((w, idx) => (
+                    <div key={idx} className={`flex items-center space-x-2 text-[11px] font-bold ${w.severity === 'danger' ? 'text-rose-800 dark:text-rose-200' : 'text-amber-800 dark:text-amber-300'}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${w.severity === 'danger' ? 'bg-rose-500' : 'bg-amber-500'}`} />
+                      <span className="truncate">{w.message}</span>
+                    </div>
+                  ))}
+                  {warnings.length > 5 && (
+                    <div className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold pl-3.5">
+                      ...他 {warnings.length - 5} 件のアラートがあります（ルール検証タブで全件確認できます）
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
           </div>
         )}
 
         {/* 2. 希望シフト入力 タブ */}
-        {activeTab === 'wishes' && (
-          <div className="space-y-4">
-
-            {/* AI テキスト＆画像 解析エリア */}
-            <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-4 shadow-md space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Brain className="w-5 h-5 text-pink-400" />
-                  <h3 className="font-extrabold text-sm">AI 希望シフト自動抽出（手書き画像 / 文章入力）</h3>
-                </div>
-                <span className="text-[10px] bg-pink-500/20 border border-pink-400/40 text-pink-300 px-2 py-0.5 rounded-full font-bold">
-                  Gemini Flash 搭載
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="md:col-span-2 flex items-center space-x-2">
-                  <input
-                    type="text"
-                    placeholder="例: 佐藤店長は10日と15日休み、田中さんは土日早番、鈴木さんは20日遅番"
-                    value={textWishInput}
-                    onChange={(e) => setTextWishInput(e.target.value)}
-                    className="flex-1 p-2.5 text-xs bg-slate-800/80 border border-slate-700 text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
-                  />
-                  <button
-                    onClick={() => processAIWishInput(textWishInput)}
-                    disabled={isParsingWish || !textWishInput.trim()}
-                    className="flex items-center space-x-1 bg-pink-500 hover:bg-pink-600 disabled:opacity-50 text-white px-3 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0"
-                  >
-                    <Send className={`w-3.5 h-3.5 ${isParsingWish ? 'animate-spin' : ''}`} />
-                    <span>解析</span>
-                  </button>
-                </div>
-
-                <div>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    ref={fileInputRef}
-                    onChange={handleImageUpload}
-                    className="hidden"
-                  />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isParsingWish}
-                    className="w-full flex items-center justify-center space-x-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 disabled:opacity-50 text-white p-2.5 rounded-xl text-xs font-bold transition-all"
-                  >
-                    <Upload className="w-4 h-4 text-amber-400" />
-                    <span>手書き希望用紙の画像から判定</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* アクティブ区分選択パレット */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-2xs space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
-                    <UserCheck className="w-5 h-5 text-pink-500" />
-                    <span>希望区分を選んで「1タップ」でカレンダー登録</span>
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    アクティブな区分を選び、月曜日始まりのカレンダーの日付セルを直接タップしてください。
-                  </p>
-                </div>
-
-                <span className="text-xs font-bold text-slate-400">デフォルト: 休み(OFF)</span>
-              </div>
-
-              {/* シフト区分パレット */}
-              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-700">
-                <span className="text-xs font-extrabold text-slate-600 dark:text-slate-300 mr-1">アクティブ区分:</span>
+            {activeTab === 'wishes' && (
+              <div className="space-y-4">
                 
-                {[
-                  { id: 'OFF', label: '休み (OFF)', short: '休', bg: 'bg-slate-200 text-slate-800 border-slate-400' },
-                  { id: 'EARLY', label: '早番', short: '早', bg: 'bg-pink-100 text-pink-700 border-pink-400' },
-                  { id: 'MIDDLE', label: '中番', short: '中', bg: 'bg-amber-100 text-amber-700 border-amber-400' },
-                  { id: 'LATE', label: '遅番', short: '遅', bg: 'bg-blue-100 text-blue-700 border-blue-400' },
-                  { id: 'CLEAR', label: '指定クリア', short: '無', bg: 'bg-slate-50 text-slate-500 border-slate-300' },
-                ].map(palette => {
-                  const isSelected = selectedWishPalette === palette.id;
-                  return (
-                    <button
-                      key={palette.id}
-                      onClick={() => setSelectedWishPalette(palette.id)}
-                      className={`px-3 py-1.5 rounded-xl border text-xs font-extrabold transition-all flex items-center space-x-1.5 ${
-                        isSelected 
-                          ? 'ring-2 ring-pink-500 ring-offset-2 dark:ring-offset-slate-800 shadow-md scale-105' 
-                          : 'opacity-70 hover:opacity-100'
-                      } ${palette.bg}`}
-                    >
-                      <span className="w-2 h-2 rounded-full bg-current" />
-                      <span>{palette.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 月曜日始まりの標準7列カレンダー入力（スタッフ別） */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {members.map(m => {
-                const memberWishes = currentWishes[m.id] || {};
-                const wishCount = Object.keys(memberWishes).length;
-
-                return (
-                  <div key={m.id} className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-3">
-                    <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2">
-                      <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100">{m.name}</span>
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-pink-100 dark:bg-pink-950 text-pink-700 dark:text-pink-300">
-                        希望指定: {wishCount}件
-                      </span>
-                    </div>
-
-                    {/* 7列月曜始まりカレンダーグリッド */}
-                    <div className="space-y-1">
-                      {/* 曜日ヘッダー */}
-                      <div className="grid grid-cols-7 text-center font-extrabold text-[11px] pb-1 border-b border-slate-200 dark:border-slate-700">
-                        <div className="text-slate-600 dark:text-slate-300">月</div>
-                        <div className="text-slate-600 dark:text-slate-300">火</div>
-                        <div className="text-slate-600 dark:text-slate-300">水</div>
-                        <div className="text-slate-600 dark:text-slate-300">木</div>
-                        <div className="text-slate-600 dark:text-slate-300">金</div>
-                        <div className="text-sky-600 dark:text-sky-400 bg-sky-50/50 dark:bg-sky-950/30 rounded-t">土</div>
-                        <div className="text-rose-600 dark:text-rose-400 bg-rose-50/50 dark:bg-rose-950/30 rounded-t">日</div>
-                      </div>
-
-                      {/* 日付セルグリッド */}
-                      <div className="grid grid-cols-7 gap-1 pt-1">
-                        {/* 1日までの空白埋めセル */}
-                        {Array.from({ length: firstDayOffset }).map((_, idx) => (
-                          <div key={`blank-${idx}`} className="h-10 bg-slate-50/40 dark:bg-slate-900/20 rounded-lg border border-transparent" />
-                        ))}
-
-                        {/* 日付セル */}
-                        {daysList.map(d => {
-                          const wish = memberWishes[d.day];
-                          const shift = wish?.type ? SHIFT_TYPES[wish.type] : null;
-
-                          return (
-                            <div
-                              key={d.day}
-                              onClick={() => handleDateCellClickForWish(m.id, d.day)}
-                              className={`h-11 p-1 rounded-lg text-center cursor-pointer border transition-all hover:scale-105 flex flex-col justify-between ${
-                                shift
-                                  ? `${shift.bg} ${shift.text} ${shift.border} font-black ring-1 ring-pink-400 shadow-2xs`
-                                  : d.isSunday
-                                  ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-100 dark:border-rose-900/30 text-rose-700 dark:text-rose-300'
-                                  : d.isSaturday
-                                  ? 'bg-sky-50/50 dark:bg-sky-950/20 border-sky-100 dark:border-sky-900/30 text-sky-700 dark:text-sky-300'
-                                  : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
-                              }`}
-                            >
-                              <div className="text-[10px] font-bold text-left leading-none opacity-80">{d.day}</div>
-                              <div className="text-xs font-black text-center leading-none pb-0.5">
-                                {shift ? shift.short : '-'}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
+                {/* 必須出勤日数の設定 */}
+                <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
+                      <Settings className="w-5 h-5 text-pink-500" />
+                      <span>必須出勤日数（絶対厳守）</span>
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      自動生成時に上回り・下回りを一切許容せず、全員の出勤日数をぴったり一致させます
+                    </p>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* 3. ルール検証 タブ */}
-        {activeTab === 'warnings' && (
-          <div className="space-y-4">
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
-                    <ShieldCheck className="w-5 h-5 text-emerald-500" />
-                    <span>シフトルール＆点検検証結果</span>
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    必須出勤日数の過不足・逆シフト・5連勤注意・6連勤以上の禁止違反（絶対判定）のアラート一覧です。
-                  </p>
+                  <div className="flex items-center space-x-2 bg-slate-50 dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <input
+                      type="number"
+                      value={requiredWorkDays}
+                      onChange={(e) => setRequiredWorkDays(Number(e.target.value))}
+                      min={1}
+                      max={daysInMonth}
+                      className="w-16 p-1.5 text-center font-black text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500"
+                    />
+                    <span className="text-xs font-bold pr-2 text-slate-700 dark:text-slate-300">日</span>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <span className="text-2xl font-black text-rose-500">{warnings.length}</span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400 block">検出件数</span>
-                </div>
-              </div>
-            </div>
 
-            {warnings.length === 0 ? (
-              <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-8 text-center space-y-2">
-                <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
-                <h3 className="text-base font-bold text-emerald-800 dark:text-emerald-200">すべてのシフトルールをクリアしています！</h3>
-                <p className="text-xs text-emerald-600 dark:text-emerald-400">全員の必須出勤日数が一致し、連勤・逆シフトの違反はありません。</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {warnings.map((w, idx) => (
-                  <div
-                    key={idx}
-                    className={`p-3 rounded-xl border flex items-center justify-between ${
-                      w.severity === 'danger'
-                        ? 'bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-800/80 text-rose-800 dark:text-rose-200'
-                        : 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800/80 text-amber-800 dark:text-amber-200'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-3">
-                      <AlertCircle className="w-5 h-5 shrink-0" />
-                      <span className="text-xs font-bold">{w.message}</span>
+                {/* AI テキスト＆画像 解析エリア */}
+                <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-4 shadow-md space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Brain className="w-5 h-5 text-pink-400" />
+                      <h3 className="font-extrabold text-sm">AI 希望シフト自動抽出（手書き画像 / 文章入力）</h3>
                     </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full font-extrabold uppercase bg-white/60 dark:bg-slate-900/60">
-                      {w.severity}
+                    <span className="text-[10px] bg-pink-500/20 border border-pink-400/40 text-pink-300 px-2 py-0.5 rounded-full font-bold">
+                      Gemini 3 Flash 搭載
                     </span>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
-        {/* 4. AIアドバイス タブ */}
-        {activeTab === 'ai' && (
-          <div className="space-y-4">
-            <div className="bg-gradient-to-br from-purple-900 to-indigo-900 text-white rounded-2xl p-5 shadow-lg space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-white/10 rounded-xl backdrop-blur-md">
-                    <Brain className="w-6 h-6 text-purple-300" />
-                  </div>
-                  <div>
-                    <h2 className="text-lg font-extrabold">Gemini シフトコンサルタント</h2>
-                    <p className="text-xs text-purple-200">6連勤以上の完全防止・週休2日ペースの遵守状態をAI診断します</p>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="md:col-span-2 flex items-center space-x-2">
+                      <input
+                        type="text"
+                        placeholder="例: 佐藤店長は10日と15日休み、田中さんは土日早番、鈴木さんは20日遅番"
+                        value={textWishInput}
+                        onChange={(e) => setTextWishInput(e.target.value)}
+                        className="flex-1 p-2.5 text-xs bg-slate-800/80 border border-slate-700 text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
+                      />
+                      <button
+                        onClick={() => processAIWishInput(textWishInput)}
+                        disabled={isParsingWish || !textWishInput.trim()}
+                        className="flex items-center space-x-1 bg-pink-500 hover:bg-pink-600 disabled:opacity-50 text-white px-3 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0"
+                      >
+                        <Send className={`w-3.5 h-3.5 ${isParsingWish ? 'animate-spin' : ''}`} />
+                        <span>解析</span>
+                      </button>
+                    </div>
+
+                    <div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        ref={fileInputRef}
+                        onChange={handleImageUpload}
+                        className="hidden"
+                      />
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isParsingWish}
+                        className="w-full flex items-center justify-center space-x-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 disabled:opacity-50 text-white p-2.5 rounded-xl text-xs font-bold transition-all"
+                      >
+                        <Upload className="w-4 h-4 text-amber-400" />
+                        <span>希望用紙の画像から読取</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                <button
-                  onClick={analyzeShiftsWithAI}
-                  disabled={isAiAnalyzing}
-                  className="flex items-center space-x-2 bg-white text-purple-900 hover:bg-purple-50 px-4 py-2 rounded-xl font-extrabold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50"
-                >
-                  <Sparkles className={`w-4 h-4 ${isAiAnalyzing ? 'animate-spin' : ''}`} />
-                  <span>{isAiAnalyzing ? '分析実行中...' : 'シフト表をAI分析'}</span>
-                </button>
-              </div>
-            </div>
+                {/* アクティブ区分選択パレット */}
+                <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
+                        <UserCheck className="w-5 h-5 text-pink-500" />
+                        <span>希望区分を選んで「1タップ」または「長押し」でカレンダー登録</span>
+                      </h2>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        アクティブな区分を選び、日付セルを直接タップしてください。セルを長押しすると全区分から直接選択できます。
+                      </p>
+                    </div>
+                  </div>
 
-            {aiAnalysisResult ? (
-              <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-md space-y-4">
-                <h3 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 border-b border-slate-100 dark:border-slate-700 pb-2 flex items-center space-x-2">
-                  <FileText className="w-4 h-4 text-purple-500" />
-                  <span>AI診断レポート</span>
-                </h3>
+                  {/* シフト区分パレット (CLEARを除去) */}
+                  <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-700">
+                    <span className="text-xs font-extrabold text-slate-600 dark:text-slate-300 mr-1">アクティブ区分:</span>
+                    
+                    {[
+                      { id: 'OFF', label: '休み (OFF)', short: '休', bg: 'bg-slate-200 text-slate-800 border-slate-400' },
+                      { id: 'EARLY', label: '早番', short: '早', bg: 'bg-pink-100 text-pink-700 border-pink-400' },
+                      { id: 'MIDDLE', label: '中番', short: '中', bg: 'bg-amber-100 text-amber-700 border-amber-400' },
+                      { id: 'LATE', label: '遅番', short: '遅', bg: 'bg-blue-100 text-blue-700 border-blue-400' },
+                      { id: 'TRAINING', label: '社内', short: '社', bg: 'bg-emerald-100 text-emerald-700 border-emerald-400' },
+                      { id: 'REWARD', label: '褒賞', short: '褒', bg: 'bg-purple-100 text-purple-700 border-purple-400' },
+                    ].map(palette => {
+                      const isSelected = selectedWishPalette === palette.id;
+                      return (
+                        <button
+                          key={palette.id}
+                          onClick={() => setSelectedWishPalette(palette.id)}
+                          className={`px-3 py-1.5 rounded-xl border text-xs font-extrabold transition-all flex items-center space-x-1.5 ${
+                            isSelected 
+                              ? 'ring-2 ring-pink-500 ring-offset-2 dark:ring-offset-slate-800 shadow-md scale-105' 
+                              : 'opacity-70 hover:opacity-100'
+                          } ${palette.bg}`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-current" />
+                          <span>{palette.label}</span>
+                        </button>
+                      );
+                    })}
 
-                {/* マークダウン記号のない見やすいレポート出力エリア */}
-                <div className="space-y-3 text-xs leading-relaxed text-slate-700 dark:text-slate-200">
-                  {aiAnalysisResult.split('\n\n').map((paragraph, pIdx) => {
-                    const isHeading = paragraph.trim().startsWith('【') || paragraph.trim().startsWith('■');
+                    <span className="text-[11px] text-slate-400 dark:text-slate-500 ml-auto flex items-center space-x-1">
+                      <Info className="w-3.5 h-3.5" />
+                      <span>設定済みのセルを再度タップすると「指定解除」できます</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* 月曜日始まりの標準7列カレンダー入力（スタッフ別） */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {members.map(m => {
+                    const memberWishes = currentWishes[m.id] || {};
+                    const wishCount = Object.keys(memberWishes).length;
+
                     return (
-                      <div
-                        key={pIdx}
-                        className={
-                          isHeading
-                            ? "bg-purple-50/60 dark:bg-purple-950/30 border-l-4 border-purple-500 p-3 rounded-r-xl font-extrabold text-purple-950 dark:text-purple-200 text-sm"
-                            : "bg-slate-50/80 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-700/60 whitespace-pre-wrap"
-                        }
-                      >
-                        {paragraph}
+                      <div key={m.id} className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2">
+                          <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100">{m.name}</span>
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-pink-100 dark:bg-pink-950 text-pink-700 dark:text-pink-300">
+                            希望指定: {wishCount}件
+                          </span>
+                        </div>
+
+                        {/* 7列月曜始まりカレンダーグリッド */}
+                        <div className="space-y-1">
+                          <div className="grid grid-cols-7 text-center font-extrabold text-[11px] pb-1 border-b border-slate-200 dark:border-slate-700">
+                            <div className="text-slate-600 dark:text-slate-300">月</div>
+                            <div className="text-slate-600 dark:text-slate-300">火</div>
+                            <div className="text-slate-600 dark:text-slate-300">水</div>
+                            <div className="text-slate-600 dark:text-slate-300">木</div>
+                            <div className="text-slate-600 dark:text-slate-300">金</div>
+                            <div className="text-sky-600 dark:text-sky-400 bg-sky-50/50 dark:bg-sky-950/30 rounded-t">土</div>
+                            <div className="text-rose-600 dark:text-rose-400 bg-rose-50/50 dark:bg-rose-950/30 rounded-t">日</div>
+                          </div>
+
+                          <div className="grid grid-cols-7 gap-1 pt-1">
+                            {Array.from({ length: firstDayOffset }).map((_, idx) => (
+                              <div key={`blank-${idx}`} className="h-10 bg-slate-50/40 dark:bg-slate-900/20 rounded-lg border border-transparent" />
+                            ))}
+
+                            {daysList.map(d => {
+                              const wish = memberWishes[d.day];
+                              const shift = wish?.type ? SHIFT_TYPES[wish.type] : null;
+
+                              return (
+                                <div
+                                  key={d.day}
+                                  onPointerDown={(e) => handlePointerDownForWish(m.id, d.day, e)}
+                                  onPointerUp={(e) => handlePointerUpForWish(m.id, d.day, e)}
+                                  onPointerLeave={handlePointerCancelForWish}
+                                  onPointerCancel={handlePointerCancelForWish}
+                                  onContextMenu={preventContextMenu}
+                                  className={`h-11 p-1 rounded-lg text-center cursor-pointer border transition-all hover:scale-105 flex flex-col justify-between select-none touch-manipulation ${
+                                    shift
+                                      ? `${shift.bg} ${shift.text} ${shift.border} font-black ring-1 ring-pink-400 shadow-sm`
+                                      : d.isSunday
+                                      ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-100 dark:border-rose-900/30 text-rose-700 dark:text-rose-300'
+                                      : d.isSaturday
+                                      ? 'bg-sky-50/50 dark:bg-sky-950/20 border-sky-100 dark:border-sky-900/30 text-sky-700 dark:text-sky-300'
+                                      : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                                  }`}
+                                >
+                                  <div className="text-[10px] font-bold text-left leading-none opacity-80 pointer-events-none">{d.day}</div>
+                                  <div className="text-xs font-black text-center leading-none pb-0.5 pointer-events-none">
+                                    {shift ? shift.short : '-'}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
                       </div>
                     );
                   })}
                 </div>
               </div>
-            ) : (
-              <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200 dark:border-slate-700 text-center text-slate-400 space-y-2">
-                <Brain className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600" />
-                <p className="text-xs font-bold">右上ボタンを押して、AI診断を開始してください。</p>
-              </div>
             )}
-          </div>
-        )}
 
-        {/* 5. スタッフ設定 タブ */}
-        {activeTab === 'members' && (
-          <div className="space-y-4">
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-2xs space-y-4">
-              <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
-                <Settings className="w-5 h-5 text-pink-500" />
-                <span>基本設定・スタッフ管理</span>
-              </h2>
-
-              <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700">
-                <div>
-                  <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 block">必須出勤日数（絶対厳守）</span>
-                  <span className="text-[11px] text-slate-500">上回り・下回りを一切許容せずぴったり一致させます</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="number"
-                    value={requiredWorkDays}
-                    onChange={(e) => setRequiredWorkDays(Number(e.target.value))}
-                    min={1}
-                    max={daysInMonth}
-                    className="w-16 p-1.5 text-center font-black text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg"
-                  />
-                  <span className="text-xs font-bold">日</span>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <input
-                  type="text"
-                  placeholder="新しいスタッフ名..."
-                  value={newMemberName}
-                  onChange={(e) => setNewMemberName(e.target.value)}
-                  className="flex-1 p-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
-                />
-                <button
-                  onClick={handleAddMember}
-                  className="flex items-center space-x-1 bg-pink-500 hover:bg-pink-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>追加</span>
-                </button>
-              </div>
-
-              <div className="space-y-2 pt-2">
-                {members.map(m => (
-                  <div key={m.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-700">
-                    {editingMemberId === m.id ? (
-                      <div className="flex items-center space-x-2 flex-1 mr-2">
-                        <input
-                          type="text"
-                          value={editingMemberName}
-                          onChange={(e) => setEditingMemberName(e.target.value)}
-                          className="p-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 rounded-lg flex-1"
-                        />
-                        <button
-                          onClick={() => handleUpdateMemberName(m.id)}
-                          className="p-1.5 bg-emerald-500 text-white rounded-lg text-xs"
-                        >
-                          <Check className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="font-bold text-xs text-slate-800 dark:text-slate-200">{m.name}</span>
-                    )}
-
-                    <div className="flex items-center space-x-1">
-                      <button
-                        onClick={() => {
-                          setEditingMemberId(m.id);
-                          setEditingMemberName(m.name);
-                        }}
-                        className="p-1.5 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteMember(m.id, m.name)}
-                        className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+            {/* 3. ルール検証 タブ */}
+            {activeTab === 'warnings' && (
+              <div className="space-y-4">
+                <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
+                        <ShieldCheck className="w-5 h-5 text-emerald-500" />
+                        <span>シフトルール＆点検検証結果</span>
+                      </h2>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        必須出勤日数の過不足・前日より早い出勤・5連勤注意・6連勤以上の禁止違反（絶対判定）のアラート一覧です。
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-2xl font-black text-rose-500">{warnings.length}</span>
+                      <span className="text-xs text-slate-500 dark:text-slate-400 block">検出件数</span>
                     </div>
                   </div>
-                ))}
+                </div>
+
+                {warnings.length === 0 ? (
+                  <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-8 text-center space-y-2">
+                    <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
+                    <h3 className="text-base font-bold text-emerald-800 dark:text-emerald-200">すべてのシフトルールをクリアしています！</h3>
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">全員の必須出勤日数が一致し、連勤・前日より早い出勤の違反はありません。</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {warnings.map((w, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-xl border flex items-center justify-between ${
+                          w.severity === 'danger'
+                            ? 'bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-800/80 text-rose-800 dark:text-rose-200'
+                            : 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800/80 text-amber-800 dark:text-amber-200'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-3">
+                          <AlertCircle className="w-5 h-5 shrink-0" />
+                          <span className="text-xs font-bold">{w.message}</span>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-extrabold uppercase bg-white/60 dark:bg-slate-900/60">
+                          {w.severity}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
+            )}
 
-            </div>
-          </div>
-        )}
+            {/* 4. AIアドバイス タブ */}
+            {activeTab === 'ai' && (
+              <div className="space-y-4">
+                <div className="bg-gradient-to-br from-purple-900 to-indigo-900 text-white rounded-2xl p-5 shadow-lg space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-3">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-white/10 rounded-xl backdrop-blur-md">
+                        <Brain className="w-6 h-6 text-purple-300" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-extrabold">Gemini シフトコンサルタント</h2>
+                        <p className="text-xs text-purple-200">6連勤以上の完全防止・前日より早い出勤・週休2日ペースの遵守状態をAI診断します</p>
+                      </div>
+                    </div>
 
-      </main>
+                    <button
+                      onClick={analyzeShiftsWithAI}
+                      disabled={isAiAnalyzing}
+                      className="flex items-center space-x-2 bg-white text-purple-900 hover:bg-purple-50 px-4 py-2 rounded-xl font-extrabold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50"
+                    >
+                      <Sparkles className={`w-4 h-4 ${isAiAnalyzing ? 'animate-spin' : ''}`} />
+                      <span>{isAiAnalyzing ? '分析実行中...' : 'シフト表をAI分析'}</span>
+                    </button>
+                  </div>
+                </div>
 
-      {/* セルクリックモーダル */}
-      {selectedCell && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-2xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 max-w-xs w-full border border-slate-200 dark:border-slate-700 shadow-xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2">
-              <div>
-                <span className="text-xs font-bold text-slate-500 block">{selectedCell.day}日({selectedCell.dayOfWeek})</span>
-                <span className="text-sm font-extrabold text-slate-800 dark:text-slate-100">{selectedCell.memberName}</span>
+                {aiAnalysisResult ? (
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-md space-y-4">
+                    <h3 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 border-b border-slate-100 dark:border-slate-700 pb-2 flex items-center space-x-2">
+                      <FileText className="w-4 h-4 text-purple-500" />
+                      <span>AI診断レポート</span>
+                    </h3>
+
+                    <div className="space-y-3 text-xs leading-relaxed text-slate-700 dark:text-slate-200">
+                      {aiAnalysisResult.split('\n\n').map((paragraph, pIdx) => {
+                        const isHeading = paragraph.trim().startsWith('【') || paragraph.trim().startsWith('■');
+                        return (
+                          <div
+                            key={pIdx}
+                            className={
+                              isHeading
+                                ? "bg-purple-50/60 dark:bg-purple-950/30 border-l-4 border-purple-500 p-3 rounded-r-xl font-extrabold text-purple-950 dark:text-purple-200 text-sm"
+                                : "bg-slate-50/80 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-700/60 whitespace-pre-wrap"
+                            }
+                          >
+                            {paragraph}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200 dark:border-slate-700 text-center text-slate-400 space-y-2">
+                    <Brain className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600" />
+                    <p className="text-xs font-bold">右上ボタンを押して、AI診断を開始してください。</p>
+                  </div>
+                )}
               </div>
-              <button
-                onClick={() => setSelectedCell(null)}
-                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400"
-              >
-                <X className="w-4 h-4" />
-              </button>
+            )}
+
+            {/* 5. スタッフ管理 タブ */}
+            {activeTab === 'members' && (
+              <div className="space-y-4">
+                <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+                  <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
+                    <Settings className="w-5 h-5 text-pink-500" />
+                    <span>スタッフ管理</span>
+                  </h2>
+
+                  <div className="flex items-center space-x-2 pt-2">
+                    <input
+                      type="text"
+                      placeholder="新しいスタッフ名..."
+                      value={newMemberName}
+                      onChange={(e) => setNewMemberName(e.target.value)}
+                      className="flex-1 p-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
+                    />
+                    <button
+                      onClick={handleAddMember}
+                      className="flex items-center space-x-1 bg-pink-500 hover:bg-pink-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>追加</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 pt-2">
+                    {members.map(m => (
+                      <div key={m.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-700">
+                        {editingMemberId === m.id ? (
+                          <div className="flex items-center space-x-2 flex-1 mr-2">
+                            <input
+                              type="text"
+                              value={editingMemberName}
+                              onChange={(e) => setEditingMemberName(e.target.value)}
+                              className="p-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 rounded-lg flex-1"
+                            />
+                            <button
+                              onClick={() => handleUpdateMemberName(m.id)}
+                              className="p-1.5 bg-emerald-500 text-white rounded-lg text-xs"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="font-bold text-xs text-slate-800 dark:text-slate-200">{m.name}</span>
+                        )}
+
+                        <div className="flex items-center space-x-1">
+                          <button
+                            onClick={() => {
+                              setEditingMemberId(m.id);
+                              setEditingMemberName(m.name);
+                            }}
+                            className="p-1.5 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteMember(m.id, m.name)}
+                            className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                </div>
+              </div>
+            )}
+
+          </main>
+
+          {/* セルクリック時のシフト直接編集モーダル */}
+          {selectedCell && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 max-w-xs w-full border border-slate-200 dark:border-slate-700 shadow-xl space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2">
+                  <div>
+                    <span className="text-xs font-bold text-slate-500 block">{selectedCell.day}日({selectedCell.dayOfWeek})</span>
+                    <span className="text-sm font-extrabold text-slate-800 dark:text-slate-100">{selectedCell.memberName}</span>
+                  </div>
+                  <button
+                    onClick={() => setSelectedCell(null)}
+                    className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.values(SHIFT_TYPES).map(st => (
+                    <button
+                      key={st.id}
+                      onClick={() => handleShiftChange(selectedCell.memberId, selectedCell.day, st.id)}
+                      className={`p-2.5 rounded-xl border font-bold text-xs flex items-center justify-between transition-all hover:scale-105 ${st.bg} ${st.text} ${st.border}`}
+                    >
+                      <span>{st.label}</span>
+                      <span className="text-[10px] opacity-75">{st.short}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
+          )}
 
-            <div className="grid grid-cols-2 gap-2">
-              {Object.values(SHIFT_TYPES).map(st => (
-                <button
-                  key={st.id}
-                  onClick={() => handleShiftChange(selectedCell.memberId, selectedCell.day, st.id)}
-                  className={`p-2.5 rounded-xl border font-bold text-xs flex items-center justify-between transition-all hover:scale-102 ${st.bg} ${st.text} ${st.border}`}
-                >
-                  <span>{st.label}</span>
-                  <span className="text-[10px] opacity-75">{st.short}</span>
-                </button>
-              ))}
+          {/* 希望シフト用の直接編集モーダル (長押しで表示) */}
+          {wishModalParams && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 max-w-xs w-full border border-slate-200 dark:border-slate-700 shadow-xl space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2">
+                  <div>
+                    <span className="text-xs font-bold text-slate-500 block">{wishModalParams.day}日の希望シフト指定</span>
+                    <span className="text-sm font-extrabold text-slate-800 dark:text-slate-100">{wishModalParams.memberName}</span>
+                  </div>
+                  <button
+                    onClick={() => setWishModalParams(null)}
+                    className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => {
+                      setWishForMember(wishModalParams.memberId, wishModalParams.day, null);
+                      setWishModalParams(null);
+                    }}
+                    className="col-span-2 p-2.5 rounded-xl border font-bold text-xs flex items-center justify-center space-x-2 transition-all hover:scale-105 bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>希望指定をクリア</span>
+                  </button>
+                  {Object.values(SHIFT_TYPES).map(st => (
+                    <button
+                      key={st.id}
+                      onClick={() => {
+                        setWishForMember(wishModalParams.memberId, wishModalParams.day, st.id);
+                        setWishModalParams(null);
+                      }}
+                      className={`p-2.5 rounded-xl border font-bold text-xs flex items-center justify-between transition-all hover:scale-105 ${st.bg} ${st.text} ${st.border}`}
+                    >
+                      <span>{st.label}</span>
+                      <span className="text-[10px] opacity-75">{st.short}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* トースト */}
-      {toastMessage && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 px-4 py-2.5 rounded-full shadow-lg text-xs font-extrabold flex items-center space-x-2 animate-bounce">
-          <Sparkles className="w-4 h-4 text-amber-400" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
+          {toastMessage && (
+            <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 px-4 py-2.5 rounded-full shadow-lg text-xs font-extrabold flex items-center space-x-2 animate-bounce">
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <span>{toastMessage}</span>
+            </div>
+          )}
 
-    </div>
-  );
-}
+        </div>
+      );
+    }
+
+    const rootElement = document.getElementById('root');
+    const root = ReactDOM.createRoot(rootElement);
+    root.render(<App />);
+  </script>
+</body>
+</html>
