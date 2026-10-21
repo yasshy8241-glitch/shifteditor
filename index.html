@@ -1001,11 +1001,11 @@ ${JSON.stringify(summaryData, null, 2)}
             <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
               
               <div className="flex items-center space-x-3">
-                <div className="p-2 bg-gradient-to-tr from-emerald-600 to-orange-500 rounded-xl text-white shadow-md">
+                <div className="p-2 bg-emerald-600 rounded-xl text-white shadow-sm">
                   <Calendar className="w-5 h-5" />
                 </div>
                 <div>
-                  <h1 className="text-lg font-extrabold leading-tight tracking-tight bg-gradient-to-r from-slate-800 via-emerald-600 to-orange-500 dark:from-slate-100 dark:via-emerald-400 dark:to-orange-400 bg-clip-text text-transparent">ShiftCraft</h1>
+                  <h1 className="text-lg font-extrabold leading-tight tracking-tight text-slate-800 dark:text-slate-100">ShiftCraft</h1>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">6連勤禁止・早い出勤回避・月曜始まりカレンダー・きれいなAI診断</p>
                 </div>
               </div>
@@ -1038,7 +1038,7 @@ ${JSON.stringify(summaryData, null, 2)}
                     const now = new Date();
                     handleMonthChange(now.getFullYear(), now.getMonth() + 1);
                   }}
-                  className="ml-1 text-[11px] px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 font-bold rounded-md hover:bg-emerald-200 dark:hover:bg-emerald-800 transition-colors"
+                  className="ml-1 text-[11px] px-2 py-0.5 bg-emerald-600 text-white font-bold rounded-md hover:bg-emerald-700 transition-colors"
                 >
                   今月
                 </button>
@@ -1049,7 +1049,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 <button
                   onClick={generateAutoShifts}
                   disabled={isGenerating}
-                  className="flex items-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-orange-500 hover:from-emerald-700 hover:to-orange-600 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-md shadow-emerald-500/20 active:scale-95 transition-all disabled:opacity-50"
+                  className="flex items-center space-x-1.5 bg-orange-500 hover:bg-orange-600 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-sm active:scale-95 transition-all disabled:opacity-50"
                 >
                   <Sparkles className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
                   <span>{isGenerating ? 'シフト自動生成中...' : 'AI自動シフト生成'}</span>
@@ -1123,7 +1123,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 onClick={() => setActiveTab('ai')}
                 className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
                   activeTab === 'ai'
-                    ? 'bg-gradient-to-r from-emerald-600 to-orange-500 text-white shadow-sm'
+                    ? 'bg-orange-500 text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
@@ -1397,7 +1397,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 </div>
 
                 {/* AI テキスト＆画像 解析エリア */}
-                <div className="bg-gradient-to-br from-slate-800 to-slate-700 text-white rounded-2xl p-4 shadow-md space-y-3">
+                <div className="bg-slate-800 text-white rounded-2xl p-4 shadow-md space-y-3 border border-slate-700">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
                       <Brain className="w-5 h-5 text-emerald-400" />
@@ -1415,7 +1415,7 @@ ${JSON.stringify(summaryData, null, 2)}
                         placeholder="例: 佐藤店長は10日と15日休み、田中さんは土日早番、鈴木さんは20日事務局"
                         value={textWishInput}
                         onChange={(e) => setTextWishInput(e.target.value)}
-                        className="flex-1 p-2.5 text-xs bg-slate-900/80 border border-slate-600 text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="flex-1 p-2.5 text-xs bg-slate-900 border border-slate-600 text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       />
                       <button
                         onClick={() => processAIWishInput(textWishInput)}
@@ -1438,7 +1438,7 @@ ${JSON.stringify(summaryData, null, 2)}
                       <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={isParsingWish}
-                        className="w-full flex items-center justify-center space-x-2 bg-slate-600 hover:bg-slate-500 border border-slate-500 disabled:opacity-50 text-white p-2.5 rounded-xl text-xs font-bold transition-all"
+                        className="w-full flex items-center justify-center space-x-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 disabled:opacity-50 text-white p-2.5 rounded-xl text-xs font-bold transition-all"
                       >
                         <Upload className="w-4 h-4 text-orange-400" />
                         <span>希望用紙の画像から読取</span>
@@ -1624,22 +1624,22 @@ ${JSON.stringify(summaryData, null, 2)}
             {/* 4. AIアドバイス タブ */}
             {activeTab === 'ai' && (
               <div className="space-y-4">
-                <div className="bg-gradient-to-br from-slate-800 via-emerald-900 to-slate-900 text-white rounded-2xl p-5 shadow-lg space-y-3">
+                <div className="bg-slate-800 text-white rounded-2xl p-5 shadow-lg space-y-3 border border-slate-700">
                   <div className="flex items-center justify-between flex-wrap gap-3">
                     <div className="flex items-center space-x-3">
-                      <div className="p-2 bg-white/10 rounded-xl backdrop-blur-md">
-                        <Brain className="w-6 h-6 text-emerald-300" />
+                      <div className="p-2 bg-emerald-600 rounded-xl">
+                        <Brain className="w-6 h-6 text-white" />
                       </div>
                       <div>
                         <h2 className="text-lg font-extrabold">Gemini シフトコンサルタント</h2>
-                        <p className="text-xs text-emerald-200">6連勤以上の完全防止・前日より早い出勤・週休2日ペースの遵守状態をAI診断します</p>
+                        <p className="text-xs text-slate-300">6連勤以上の完全防止・前日より早い出勤・週休2日ペースの遵守状態をAI診断します</p>
                       </div>
                     </div>
 
                     <button
                       onClick={analyzeShiftsWithAI}
                       disabled={isAiAnalyzing}
-                      className="flex items-center space-x-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl font-extrabold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50"
+                      className="flex items-center space-x-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl font-extrabold text-xs shadow-sm transition-all active:scale-95 disabled:opacity-50"
                     >
                       <Sparkles className={`w-4 h-4 ${isAiAnalyzing ? 'animate-spin' : ''}`} />
                       <span>{isAiAnalyzing ? '分析実行中...' : 'シフト表をAI分析'}</span>
