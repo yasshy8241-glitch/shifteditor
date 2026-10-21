@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Smart Shift AI Pro - スマートシフト管理</title>
+  <title>ShiftCraft - スマートシフト管理</title>
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -14,9 +14,9 @@
         extend: {
           colors: {
             brand: {
-              50: '#fdf2f8',
-              500: '#ec4899',
-              600: '#db2777',
+              50: '#ecfdf5',
+              500: '#10b981',
+              600: '#059669',
             }
           }
         }
@@ -45,7 +45,7 @@
     }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-800 transition-colors duration-200">
+<body class="bg-white text-slate-800 transition-colors duration-200">
   <div id="root"></div>
 
   <script type="text/babel">
@@ -84,11 +84,12 @@
     const ZoomOut = ({ className }) => <IconBase className={className} d={["M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z", "M7 10h6"]} />;
 
     const SHIFT_TYPES = {
-      EARLY: { id: 'EARLY', label: '早番', time: '9:00-18:00', short: '早', bg: 'bg-pink-100 dark:bg-pink-950/70', text: 'text-pink-700 dark:text-pink-300', border: 'border-pink-300 dark:border-pink-800' },
+      EARLY: { id: 'EARLY', label: '早番', time: '9:00-18:00', short: '早', bg: 'bg-orange-100 dark:bg-orange-950/70', text: 'text-orange-700 dark:text-orange-300', border: 'border-orange-300 dark:border-orange-800' },
       MIDDLE: { id: 'MIDDLE', label: '中番', time: '11:00-20:00', short: '中', bg: 'bg-amber-100 dark:bg-amber-950/70', text: 'text-amber-700 dark:text-amber-300', border: 'border-amber-300 dark:border-amber-800' },
       LATE: { id: 'LATE', label: '遅番', time: '13:00-22:00', short: '遅', bg: 'bg-blue-100 dark:bg-blue-950/70', text: 'text-blue-700 dark:text-blue-300', border: 'border-blue-300 dark:border-blue-800' },
+      OFFICE: { id: 'OFFICE', label: '事務局', time: '事務局勤務', short: '事', bg: 'bg-teal-100 dark:bg-teal-950/70', text: 'text-teal-700 dark:text-teal-300', border: 'border-teal-300 dark:border-teal-800' },
       TRAINING: { id: 'TRAINING', label: '社内', time: '社内研修', short: '社', bg: 'bg-emerald-100 dark:bg-emerald-950/70', text: 'text-emerald-700 dark:text-emerald-300', border: 'border-emerald-300 dark:border-emerald-800' },
-      REWARD: { id: 'REWARD', label: '褒賞', time: '特別勤務', short: '褒', bg: 'bg-purple-100 dark:bg-purple-950/70', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-300 dark:border-purple-800' },
+      REWARD: { id: 'REWARD', label: '褒賞', time: '特別勤務', short: '褒', bg: 'bg-lime-100 dark:bg-lime-950/70', text: 'text-lime-700 dark:text-lime-300', border: 'border-lime-300 dark:border-lime-800' },
       OFF: { id: 'OFF', label: '休み', time: '休日', short: '休', bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-500 dark:text-slate-400', border: 'border-slate-200 dark:border-slate-700' },
     };
 
@@ -419,7 +420,7 @@
                   properties: {
                     memberName: { type: "STRING" },
                     day: { type: "INTEGER" },
-                    wishType: { type: "STRING", description: "OFF, EARLY, MIDDLE, LATE のいずれか" }
+                    wishType: { type: "STRING", description: "OFF, EARLY, MIDDLE, LATE, OFFICE, TRAINING, REWARD のいずれか" }
                   },
                   required: ["memberName", "day", "wishType"]
                 }
@@ -439,7 +440,7 @@
           }
 
           const instruction = `登録スタッフ: ${members.map(m => m.name).join(', ')}。年月: ${year}年${month}月 (${daysInMonth}日まで)。
-希望シフト情報から各スタッフの希望日と希望種別(OFF, EARLY, MIDDLE, LATE)を抽出してJSONで返してください。`;
+希望シフト情報から各スタッフの希望日と希望種別(OFF, EARLY, MIDDLE, LATE, OFFICE, TRAINING, REWARD)を抽出してJSONで返してください。`;
 
           parts.push({ text: promptText || instruction });
 
@@ -476,7 +477,7 @@
                 if (!currentMonthWish[targetMem.id]) {
                   currentMonthWish[targetMem.id] = {};
                 }
-                const validWishType = ['OFF', 'EARLY', 'MIDDLE', 'LATE'].includes(item.wishType) ? item.wishType : 'OFF';
+                const validWishType = ['OFF', 'EARLY', 'MIDDLE', 'LATE', 'OFFICE', 'TRAINING', 'REWARD'].includes(item.wishType) ? item.wishType : 'OFF';
                 currentMonthWish[targetMem.id][item.day] = { type: validWishType };
                 appliedCount++;
               }
@@ -886,7 +887,7 @@
       };
 
       const exportToCsv = () => {
-        const headers = ['スタッフ名', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '休み'];
+        const headers = ['スタッフ名', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '事務局', '休み'];
         const rows = members.map(m => {
           const memberShifts = currentShifts[m.id] || {};
           const daysData = daysList.map(d => SHIFT_TYPES[memberShifts[d.day]]?.label || '休み');
@@ -894,8 +895,9 @@
           const earlyCount = Object.values(memberShifts).filter(s => s === 'EARLY').length;
           const middleCount = Object.values(memberShifts).filter(s => s === 'MIDDLE').length;
           const lateCount = Object.values(memberShifts).filter(s => s === 'LATE').length;
+          const officeCount = Object.values(memberShifts).filter(s => s === 'OFFICE').length;
           const offCount = Object.values(memberShifts).filter(s => s === 'OFF').length;
-          return [m.name, ...daysData, workCount, earlyCount, middleCount, lateCount, offCount];
+          return [m.name, ...daysData, workCount, earlyCount, middleCount, lateCount, officeCount, offCount];
         });
 
         const csvContent = '\uFEFF' + [headers, ...rows].map(e => e.map(cell => `"${cell}"`).join(',')).join('\n');
@@ -903,7 +905,7 @@
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.setAttribute('href', url);
-        link.setAttribute('download', `Shift_${year}_${String(month).padStart(2, '0')}.csv`);
+        link.setAttribute('download', `ShiftCraft_${year}_${String(month).padStart(2, '0')}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -992,43 +994,43 @@ ${JSON.stringify(summaryData, null, 2)}
       };
 
       return (
-        <div className={`min-h-screen font-sans ${darkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
+        <div className={`min-h-screen font-sans ${darkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}`}>
           
           {/* ヘッダー */}
-          <header className="sticky top-0 z-30 backdrop-blur-md bg-white/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 px-4 py-3 shadow-sm">
+          <header className="sticky top-0 z-30 backdrop-blur-md bg-white/95 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 px-4 py-3 shadow-sm">
             <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
               
               <div className="flex items-center space-x-3">
-                <div className="p-2 bg-gradient-to-tr from-pink-500 to-amber-500 rounded-xl text-white shadow-md">
+                <div className="p-2 bg-gradient-to-tr from-emerald-600 to-orange-500 rounded-xl text-white shadow-md">
                   <Calendar className="w-5 h-5" />
                 </div>
                 <div>
-                  <h1 className="text-lg font-extrabold leading-tight tracking-tight bg-gradient-to-r from-pink-600 to-amber-600 bg-clip-text text-transparent">Smart Shift AI Pro</h1>
+                  <h1 className="text-lg font-extrabold leading-tight tracking-tight bg-gradient-to-r from-slate-800 via-emerald-600 to-orange-500 dark:from-slate-100 dark:via-emerald-400 dark:to-orange-400 bg-clip-text text-transparent">ShiftCraft</h1>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">6連勤禁止・早い出勤回避・月曜始まりカレンダー・きれいなAI診断</p>
                 </div>
               </div>
 
               {/* 年月切り替え */}
-              <div className="flex items-center space-x-2 bg-pink-50/80 dark:bg-pink-950/40 border border-pink-200 dark:border-pink-800/60 px-3 py-1.5 rounded-xl shadow-sm">
+              <div className="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-xl shadow-sm">
                 <button
                   onClick={() => handleMonthChange(year, month - 1)}
-                  className="p-1 hover:bg-pink-200/60 dark:hover:bg-pink-800/60 rounded-lg transition-colors"
+                  className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
                   title="前月"
                 >
-                  <ChevronLeft className="w-4 h-4 text-pink-700 dark:text-pink-300" />
+                  <ChevronLeft className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                 </button>
                 
                 <div className="text-center px-1">
-                  <span className="text-xs font-semibold text-pink-900 dark:text-pink-200 block">{year}年</span>
-                  <span className="text-base font-black text-pink-700 dark:text-pink-300 leading-none">{month}月</span>
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 block">{year}年</span>
+                  <span className="text-base font-black text-slate-800 dark:text-slate-100 leading-none">{month}月</span>
                 </div>
 
                 <button
                   onClick={() => handleMonthChange(year, month + 1)}
-                  className="p-1 hover:bg-pink-200/60 dark:hover:bg-pink-800/60 rounded-lg transition-colors"
+                  className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
                   title="翌月"
                 >
-                  <ChevronRight className="w-4 h-4 text-pink-700 dark:text-pink-300" />
+                  <ChevronRight className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                 </button>
 
                 <button
@@ -1036,7 +1038,7 @@ ${JSON.stringify(summaryData, null, 2)}
                     const now = new Date();
                     handleMonthChange(now.getFullYear(), now.getMonth() + 1);
                   }}
-                  className="ml-1 text-[11px] px-2 py-0.5 bg-pink-200/70 dark:bg-pink-800/70 text-pink-800 dark:text-pink-200 font-bold rounded-md hover:bg-pink-300 transition-colors"
+                  className="ml-1 text-[11px] px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 font-bold rounded-md hover:bg-emerald-200 dark:hover:bg-emerald-800 transition-colors"
                 >
                   今月
                 </button>
@@ -1047,7 +1049,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 <button
                   onClick={generateAutoShifts}
                   disabled={isGenerating}
-                  className="flex items-center space-x-1.5 bg-gradient-to-r from-pink-500 to-amber-500 hover:from-pink-600 hover:to-amber-600 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-md shadow-pink-500/20 active:scale-95 transition-all disabled:opacity-50"
+                  className="flex items-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-orange-500 hover:from-emerald-700 hover:to-orange-600 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-md shadow-emerald-500/20 active:scale-95 transition-all disabled:opacity-50"
                 >
                   <Sparkles className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
                   <span>{isGenerating ? 'シフト自動生成中...' : 'AI自動シフト生成'}</span>
@@ -1066,7 +1068,7 @@ ${JSON.stringify(summaryData, null, 2)}
                   className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700"
                   title={darkMode ? 'ライトモード' : 'ダークモード'}
                 >
-                  {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
+                  {darkMode ? <Sun className="w-4 h-4 text-orange-400" /> : <Moon className="w-4 h-4" />}
                 </button>
               </div>
 
@@ -1080,7 +1082,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 onClick={() => setActiveTab('matrix')}
                 className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
                   activeTab === 'matrix'
-                    ? 'bg-pink-500 text-white shadow-sm'
+                    ? 'bg-emerald-600 text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
@@ -1092,7 +1094,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 onClick={() => setActiveTab('wishes')}
                 className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
                   activeTab === 'wishes'
-                    ? 'bg-pink-500 text-white shadow-sm'
+                    ? 'bg-emerald-600 text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
@@ -1104,7 +1106,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 onClick={() => setActiveTab('warnings')}
                 className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
                   activeTab === 'warnings'
-                    ? 'bg-pink-500 text-white shadow-sm'
+                    ? 'bg-emerald-600 text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
@@ -1121,7 +1123,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 onClick={() => setActiveTab('ai')}
                 className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
                   activeTab === 'ai'
-                    ? 'bg-gradient-to-r from-purple-600 to-pink-500 text-white shadow-sm'
+                    ? 'bg-gradient-to-r from-emerald-600 to-orange-500 text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
@@ -1133,7 +1135,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 onClick={() => setActiveTab('members')}
                 className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
                   activeTab === 'members'
-                    ? 'bg-pink-500 text-white shadow-sm'
+                    ? 'bg-emerald-600 text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
@@ -1163,8 +1165,8 @@ ${JSON.stringify(summaryData, null, 2)}
                     </div>
                     
                     <div className="flex flex-wrap items-center gap-3">
-                      <div className="flex items-center space-x-2 text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-100 dark:border-slate-700/60 hidden sm:flex">
-                        <Info className="w-3.5 h-3.5 text-pink-500" />
+                      <div className="flex items-center space-x-2 text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700/60 hidden sm:flex">
+                        <Info className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                         <span>6連勤禁止｜早い出勤(中→早/遅→中/遅→早)回避｜「早1中1遅1」優先</span>
                       </div>
                       
@@ -1172,7 +1174,7 @@ ${JSON.stringify(summaryData, null, 2)}
                         onClick={() => setViewScale(v => v === 'normal' ? 'compact' : 'normal')}
                         className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors shadow-sm ${
                           viewScale === 'compact'
-                            ? 'bg-pink-50 dark:bg-pink-900/30 border-pink-200 dark:border-pink-800/60 text-pink-700 dark:text-pink-300'
+                            ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300'
                             : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
                         }`}
                         title="シフト表の表示倍率を切り替えます"
@@ -1183,10 +1185,10 @@ ${JSON.stringify(summaryData, null, 2)}
                     </div>
                   </div>
 
-                  <div className="bg-gradient-to-br from-pink-50 to-amber-50 dark:from-slate-800 dark:to-slate-800/80 rounded-2xl p-3 border border-pink-200/70 dark:border-slate-700 shadow-sm flex items-center justify-between">
+                  <div className="bg-slate-50 dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm flex items-center justify-between">
                     <div>
                       <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">必須出勤日数</span>
-                      <span className="text-xl font-black text-pink-600 dark:text-pink-400">{requiredWorkDays} 日</span>
+                      <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">{requiredWorkDays} 日</span>
                     </div>
                     <div className="text-right">
                   <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">登録人数</span>
@@ -1250,7 +1252,7 @@ ${JSON.stringify(summaryData, null, 2)}
                             if (hasDanger) {
                               alertClass = "ring-2 ring-rose-500 ring-offset-1 bg-rose-50 dark:bg-rose-900/40 animate-pulse";
                             } else if (hasWarning) {
-                              alertClass = "ring-2 ring-amber-400 ring-offset-1 bg-amber-50 dark:bg-amber-900/40 animate-pulse";
+                              alertClass = "ring-2 ring-orange-400 ring-offset-1 bg-orange-50 dark:bg-orange-900/40 animate-pulse";
                             }
 
                             return (
@@ -1263,7 +1265,7 @@ ${JSON.stringify(summaryData, null, 2)}
                                   {shift.short}
                                 </div>
                                 {wish && (
-                                  <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-pink-500" title="希望指定あり" />
+                                  <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-orange-500" title="希望指定あり" />
                                 )}
                               </td>
                             );
@@ -1331,7 +1333,7 @@ ${JSON.stringify(summaryData, null, 2)}
                     <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
                       {warnings.length === 0
                         ? '中→早・遅→中・遅→早や6連勤以上、希望との不一致は発生していません'
-                        : '以下の項目に改善が必要です（該当セルは赤枠・黄枠で強調されています）'}
+                        : '以下の項目に改善が必要です（該当セルは赤枠・オレンジ枠で強調されています）'}
                     </span>
                   </div>
                 </div>
@@ -1349,8 +1351,8 @@ ${JSON.stringify(summaryData, null, 2)}
               {warnings.length > 0 && (
                 <div className="mt-2.5 pt-2 border-t border-rose-200/60 dark:border-rose-800/50 space-y-1.5 max-h-48 overflow-y-auto pr-1">
                   {warnings.slice(0, 5).map((w, idx) => (
-                    <div key={idx} className={`flex items-center space-x-2 text-[11px] font-bold ${w.severity === 'danger' ? 'text-rose-800 dark:text-rose-200' : 'text-amber-800 dark:text-amber-300'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${w.severity === 'danger' ? 'bg-rose-500' : 'bg-amber-500'}`} />
+                    <div key={idx} className={`flex items-center space-x-2 text-[11px] font-bold ${w.severity === 'danger' ? 'text-rose-800 dark:text-rose-200' : 'text-orange-800 dark:text-orange-300'}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${w.severity === 'danger' ? 'bg-rose-500' : 'bg-orange-500'}`} />
                       <span className="truncate">{w.message}</span>
                     </div>
                   ))}
@@ -1374,7 +1376,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div>
                     <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
-                      <Settings className="w-5 h-5 text-pink-500" />
+                      <Settings className="w-5 h-5 text-emerald-600" />
                       <span>必須出勤日数（絶対厳守）</span>
                     </h2>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -1388,20 +1390,20 @@ ${JSON.stringify(summaryData, null, 2)}
                       onChange={(e) => setRequiredWorkDays(Number(e.target.value))}
                       min={1}
                       max={daysInMonth}
-                      className="w-16 p-1.5 text-center font-black text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500"
+                      className="w-16 p-1.5 text-center font-black text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
                     <span className="text-xs font-bold pr-2 text-slate-700 dark:text-slate-300">日</span>
                   </div>
                 </div>
 
                 {/* AI テキスト＆画像 解析エリア */}
-                <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-4 shadow-md space-y-3">
+                <div className="bg-gradient-to-br from-slate-800 to-slate-700 text-white rounded-2xl p-4 shadow-md space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
-                      <Brain className="w-5 h-5 text-pink-400" />
+                      <Brain className="w-5 h-5 text-emerald-400" />
                       <h3 className="font-extrabold text-sm">AI 希望シフト自動抽出（手書き画像 / 文章入力）</h3>
                     </div>
-                    <span className="text-[10px] bg-pink-500/20 border border-pink-400/40 text-pink-300 px-2 py-0.5 rounded-full font-bold">
+                    <span className="text-[10px] bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 px-2 py-0.5 rounded-full font-bold">
                       Gemini 3 Flash 搭載
                     </span>
                   </div>
@@ -1410,15 +1412,15 @@ ${JSON.stringify(summaryData, null, 2)}
                     <div className="md:col-span-2 flex items-center space-x-2">
                       <input
                         type="text"
-                        placeholder="例: 佐藤店長は10日と15日休み、田中さんは土日早番、鈴木さんは20日遅番"
+                        placeholder="例: 佐藤店長は10日と15日休み、田中さんは土日早番、鈴木さんは20日事務局"
                         value={textWishInput}
                         onChange={(e) => setTextWishInput(e.target.value)}
-                        className="flex-1 p-2.5 text-xs bg-slate-800/80 border border-slate-700 text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
+                        className="flex-1 p-2.5 text-xs bg-slate-900/80 border border-slate-600 text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       />
                       <button
                         onClick={() => processAIWishInput(textWishInput)}
                         disabled={isParsingWish || !textWishInput.trim()}
-                        className="flex items-center space-x-1 bg-pink-500 hover:bg-pink-600 disabled:opacity-50 text-white px-3 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0"
+                        className="flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0"
                       >
                         <Send className={`w-3.5 h-3.5 ${isParsingWish ? 'animate-spin' : ''}`} />
                         <span>解析</span>
@@ -1436,9 +1438,9 @@ ${JSON.stringify(summaryData, null, 2)}
                       <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={isParsingWish}
-                        className="w-full flex items-center justify-center space-x-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 disabled:opacity-50 text-white p-2.5 rounded-xl text-xs font-bold transition-all"
+                        className="w-full flex items-center justify-center space-x-2 bg-slate-600 hover:bg-slate-500 border border-slate-500 disabled:opacity-50 text-white p-2.5 rounded-xl text-xs font-bold transition-all"
                       >
-                        <Upload className="w-4 h-4 text-amber-400" />
+                        <Upload className="w-4 h-4 text-orange-400" />
                         <span>希望用紙の画像から読取</span>
                       </button>
                     </div>
@@ -1450,7 +1452,7 @@ ${JSON.stringify(summaryData, null, 2)}
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
-                        <UserCheck className="w-5 h-5 text-pink-500" />
+                        <UserCheck className="w-5 h-5 text-emerald-600" />
                         <span>希望区分を選んで「1タップ」または「長押し」でカレンダー登録</span>
                       </h2>
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -1459,17 +1461,18 @@ ${JSON.stringify(summaryData, null, 2)}
                     </div>
                   </div>
 
-                  {/* シフト区分パレット (CLEARを除去) */}
+                  {/* シフト区分パレット */}
                   <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-700">
                     <span className="text-xs font-extrabold text-slate-600 dark:text-slate-300 mr-1">アクティブ区分:</span>
                     
                     {[
                       { id: 'OFF', label: '休み (OFF)', short: '休', bg: 'bg-slate-200 text-slate-800 border-slate-400' },
-                      { id: 'EARLY', label: '早番', short: '早', bg: 'bg-pink-100 text-pink-700 border-pink-400' },
+                      { id: 'EARLY', label: '早番', short: '早', bg: 'bg-orange-100 text-orange-700 border-orange-400' },
                       { id: 'MIDDLE', label: '中番', short: '中', bg: 'bg-amber-100 text-amber-700 border-amber-400' },
                       { id: 'LATE', label: '遅番', short: '遅', bg: 'bg-blue-100 text-blue-700 border-blue-400' },
+                      { id: 'OFFICE', label: '事務局', short: '事', bg: 'bg-teal-100 text-teal-700 border-teal-400' },
                       { id: 'TRAINING', label: '社内', short: '社', bg: 'bg-emerald-100 text-emerald-700 border-emerald-400' },
-                      { id: 'REWARD', label: '褒賞', short: '褒', bg: 'bg-purple-100 text-purple-700 border-purple-400' },
+                      { id: 'REWARD', label: '褒賞', short: '褒', bg: 'bg-lime-100 text-lime-700 border-lime-400' },
                     ].map(palette => {
                       const isSelected = selectedWishPalette === palette.id;
                       return (
@@ -1478,7 +1481,7 @@ ${JSON.stringify(summaryData, null, 2)}
                           onClick={() => setSelectedWishPalette(palette.id)}
                           className={`px-3 py-1.5 rounded-xl border text-xs font-extrabold transition-all flex items-center space-x-1.5 ${
                             isSelected 
-                              ? 'ring-2 ring-pink-500 ring-offset-2 dark:ring-offset-slate-800 shadow-md scale-105' 
+                              ? 'ring-2 ring-emerald-600 ring-offset-2 dark:ring-offset-slate-800 shadow-md scale-105' 
                               : 'opacity-70 hover:opacity-100'
                           } ${palette.bg}`}
                         >
@@ -1505,7 +1508,7 @@ ${JSON.stringify(summaryData, null, 2)}
                       <div key={m.id} className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-3">
                         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2">
                           <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100">{m.name}</span>
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-pink-100 dark:bg-pink-950 text-pink-700 dark:text-pink-300">
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
                             希望指定: {wishCount}件
                           </span>
                         </div>
@@ -1541,7 +1544,7 @@ ${JSON.stringify(summaryData, null, 2)}
                                   onContextMenu={preventContextMenu}
                                   className={`h-11 p-1 rounded-lg text-center cursor-pointer border transition-all hover:scale-105 flex flex-col justify-between select-none touch-manipulation ${
                                     shift
-                                      ? `${shift.bg} ${shift.text} ${shift.border} font-black ring-1 ring-pink-400 shadow-sm`
+                                      ? `${shift.bg} ${shift.text} ${shift.border} font-black ring-1 ring-emerald-500 shadow-sm`
                                       : d.isSunday
                                       ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-100 dark:border-rose-900/30 text-rose-700 dark:text-rose-300'
                                       : d.isSaturday
@@ -1573,7 +1576,7 @@ ${JSON.stringify(summaryData, null, 2)}
                   <div className="flex items-center justify-between">
                     <div>
                       <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
-                        <ShieldCheck className="w-5 h-5 text-emerald-500" />
+                        <ShieldCheck className="w-5 h-5 text-emerald-600" />
                         <span>シフトルール＆点検検証結果</span>
                       </h2>
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -1601,7 +1604,7 @@ ${JSON.stringify(summaryData, null, 2)}
                         className={`p-3 rounded-xl border flex items-center justify-between ${
                           w.severity === 'danger'
                             ? 'bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-800/80 text-rose-800 dark:text-rose-200'
-                            : 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800/80 text-amber-800 dark:text-amber-200'
+                            : 'bg-orange-50 dark:bg-orange-950/50 border-orange-200 dark:border-orange-800/80 text-orange-800 dark:text-orange-200'
                         }`}
                       >
                         <div className="flex items-center space-x-3">
@@ -1621,22 +1624,22 @@ ${JSON.stringify(summaryData, null, 2)}
             {/* 4. AIアドバイス タブ */}
             {activeTab === 'ai' && (
               <div className="space-y-4">
-                <div className="bg-gradient-to-br from-purple-900 to-indigo-900 text-white rounded-2xl p-5 shadow-lg space-y-3">
+                <div className="bg-gradient-to-br from-slate-800 via-emerald-900 to-slate-900 text-white rounded-2xl p-5 shadow-lg space-y-3">
                   <div className="flex items-center justify-between flex-wrap gap-3">
                     <div className="flex items-center space-x-3">
                       <div className="p-2 bg-white/10 rounded-xl backdrop-blur-md">
-                        <Brain className="w-6 h-6 text-purple-300" />
+                        <Brain className="w-6 h-6 text-emerald-300" />
                       </div>
                       <div>
                         <h2 className="text-lg font-extrabold">Gemini シフトコンサルタント</h2>
-                        <p className="text-xs text-purple-200">6連勤以上の完全防止・前日より早い出勤・週休2日ペースの遵守状態をAI診断します</p>
+                        <p className="text-xs text-emerald-200">6連勤以上の完全防止・前日より早い出勤・週休2日ペースの遵守状態をAI診断します</p>
                       </div>
                     </div>
 
                     <button
                       onClick={analyzeShiftsWithAI}
                       disabled={isAiAnalyzing}
-                      className="flex items-center space-x-2 bg-white text-purple-900 hover:bg-purple-50 px-4 py-2 rounded-xl font-extrabold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50"
+                      className="flex items-center space-x-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl font-extrabold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50"
                     >
                       <Sparkles className={`w-4 h-4 ${isAiAnalyzing ? 'animate-spin' : ''}`} />
                       <span>{isAiAnalyzing ? '分析実行中...' : 'シフト表をAI分析'}</span>
@@ -1647,7 +1650,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 {aiAnalysisResult ? (
                   <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-slate-200 dark:border-slate-700 shadow-md space-y-4">
                     <h3 className="font-extrabold text-sm text-slate-800 dark:text-slate-100 border-b border-slate-100 dark:border-slate-700 pb-2 flex items-center space-x-2">
-                      <FileText className="w-4 h-4 text-purple-500" />
+                      <FileText className="w-4 h-4 text-emerald-600" />
                       <span>AI診断レポート</span>
                     </h3>
 
@@ -1659,7 +1662,7 @@ ${JSON.stringify(summaryData, null, 2)}
                             key={pIdx}
                             className={
                               isHeading
-                                ? "bg-purple-50/60 dark:bg-purple-950/30 border-l-4 border-purple-500 p-3 rounded-r-xl font-extrabold text-purple-950 dark:text-purple-200 text-sm"
+                                ? "bg-emerald-50/60 dark:bg-emerald-950/30 border-l-4 border-emerald-600 p-3 rounded-r-xl font-extrabold text-emerald-950 dark:text-emerald-200 text-sm"
                                 : "bg-slate-50/80 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-700/60 whitespace-pre-wrap"
                             }
                           >
@@ -1683,7 +1686,7 @@ ${JSON.stringify(summaryData, null, 2)}
               <div className="space-y-4">
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
                   <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
-                    <Settings className="w-5 h-5 text-pink-500" />
+                    <Settings className="w-5 h-5 text-emerald-600" />
                     <span>スタッフ管理</span>
                   </h2>
 
@@ -1693,11 +1696,11 @@ ${JSON.stringify(summaryData, null, 2)}
                       placeholder="新しいスタッフ名..."
                       value={newMemberName}
                       onChange={(e) => setNewMemberName(e.target.value)}
-                      className="flex-1 p-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
+                      className="flex-1 p-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
                     <button
                       onClick={handleAddMember}
-                      className="flex items-center space-x-1 bg-pink-500 hover:bg-pink-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all"
+                      className="flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all"
                     >
                       <Plus className="w-4 h-4" />
                       <span>追加</span>
@@ -1717,7 +1720,7 @@ ${JSON.stringify(summaryData, null, 2)}
                             />
                             <button
                               onClick={() => handleUpdateMemberName(m.id)}
-                              className="p-1.5 bg-emerald-500 text-white rounded-lg text-xs"
+                              className="p-1.5 bg-emerald-600 text-white rounded-lg text-xs"
                             >
                               <Check className="w-4 h-4" />
                             </button>
@@ -1833,8 +1836,8 @@ ${JSON.stringify(summaryData, null, 2)}
           )}
 
           {toastMessage && (
-            <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 px-4 py-2.5 rounded-full shadow-lg text-xs font-extrabold flex items-center space-x-2 animate-bounce">
-              <Sparkles className="w-4 h-4 text-amber-400" />
+            <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900 px-4 py-2.5 rounded-full shadow-lg text-xs font-extrabold flex items-center space-x-2 animate-bounce">
+              <Sparkles className="w-4 h-4 text-orange-400" />
               <span>{toastMessage}</span>
             </div>
           )}
