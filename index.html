@@ -48,6 +48,40 @@
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
+
+    /* デバイス・画面比率に応じた自動フォント＆UIスケーリング (html.scale-auto 時) */
+    html.scale-auto {
+      font-size: 15px; /* スマホ標準 */
+    }
+    /* 折りたたみスマホ (Fold系)・小型タブレット */
+    @media (min-width: 580px) and (max-width: 1023px) {
+      html.scale-auto {
+        font-size: 15.5px;
+      }
+    }
+    /* 標準ノートPC・デスクトップ */
+    @media (min-width: 1024px) and (max-width: 1799px) {
+      html.scale-auto {
+        font-size: 16px;
+      }
+    }
+    /* 大画面モニター・フルHD以上 */
+    @media (min-width: 1800px) {
+      html.scale-auto {
+        font-size: 18px;
+      }
+    }
+    /* ウルトラワイドモニター (21:9以上 または 超高解像度) */
+    @media (min-width: 2200px), (min-width: 1600px) and (min-aspect-ratio: 21/9) {
+      html.scale-auto {
+        font-size: 20px;
+      }
+    }
+
+    /* 手動サイズ指定用クラス */
+    html.scale-normal { font-size: 16px; }
+    html.scale-large { font-size: 18.5px; }
+    html.scale-xlarge { font-size: 21px; }
   </style>
 </head>
 <body class="bg-white text-slate-800 transition-colors duration-200">
@@ -108,7 +142,8 @@
     const ZoomOut = ({ className }) => <IconBase className={className} d={["M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z", "M7 10h6"]} />;
     const ArrowUp = ({ className }) => <IconBase className={className} d="m18 15-6-6-6 6" />;
     const ArrowDown = ({ className }) => <IconBase className={className} d="m6 9 6 6 6-6" />;
-    const Search = ({ className }) => <IconBase className={className} d={["M21 21l-4.35-4.35", "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z"]} />;
+    const Filter = ({ className }) => <IconBase className={className} d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />;
+    const Monitor = ({ className }) => <IconBase className={className} d={["M20 3H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z", "M8 21h8", "M12 17v4"]} />;
     const Cloud = ({ className }) => <IconBase className={className} d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />;
 
     const SHIFT_TYPES = {
@@ -123,10 +158,10 @@
     };
 
     const INITIAL_MEMBERS = [
-      { id: 'm1', name: '佐藤 店長' },
-      { id: 'm2', name: '田中 さん' },
-      { id: 'm3', name: '鈴木 さん' },
-      { id: 'm4', name: '高橋 さん' },
+      { id: 'm1', name: '佐藤 店長', role: 'regular' },
+      { id: 'm2', name: '田中 さん', role: 'regular' },
+      { id: 'm3', name: '鈴木 さん', role: 'regular' },
+      { id: 'm4', name: '高橋 さん', role: 'sub' },
     ];
 
     const WEEKDAYS_MON_START = ['月', '火', '水', '木', '金', '土', '日'];
@@ -173,8 +208,12 @@
       const [darkMode, setDarkMode] = useState(false);
       const [activeTab, setActiveTab] = useState('matrix');
       const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('shift_gemini_api_key') || '');
-      const [viewScale, setViewScale] = useState('normal');
       
+      // 全体一覧（縮小）モードと、画面サイズ最適化モード
+      const [viewScale, setViewScale] = useState('normal'); // 'normal' | 'compact'
+      const [uiScaleMode, setUiScaleMode] = useState(() => localStorage.getItem('shift_ui_scale') || 'auto'); // 'auto' | 'normal' | 'large' | 'xlarge'
+      const [deviceLabel, setDeviceLabel] = useState('PC');
+
       const today = new Date();
       const nextMonthDate = new Date(today.getFullYear(), today.getMonth() + 1, 1);
       const [year, setYear] = useState(nextMonthDate.getFullYear());
@@ -184,7 +223,9 @@
 
       const [members, setMembers] = useState(INITIAL_MEMBERS);
       const [requiredWorkDays, setRequiredWorkDays] = useState(20);
-      const [staffFilter, setStaffFilter] = useState('');
+      
+      // スタッフ選択フィルター（シフト表表示 ＆ 希望シフト表示 ＆ 自動シフト生成対象）
+      const [selectedMemberIds, setSelectedMemberIds] = useState(() => INITIAL_MEMBERS.map(m => m.id));
 
       const [allMonthlyData, setAllMonthlyData] = useState({});
 
@@ -203,12 +244,61 @@
       const fileInputRef = useRef(null);
 
       const [newMemberName, setNewMemberName] = useState('');
+      const [newMemberRole, setNewMemberRole] = useState('regular'); // 'regular' | 'sub'
       const [editingMemberId, setEditingMemberId] = useState(null);
       const [editingMemberName, setEditingMemberName] = useState('');
 
       const [wishModalParams, setWishModalParams] = useState(null);
       const pressTimer = useRef(null);
       const isLongPress = useRef(false);
+
+      // --- 画面サイズ・比率の自動識別とスケーリング適用 ---
+      useEffect(() => {
+        const html = document.documentElement;
+        html.classList.remove('scale-auto', 'scale-normal', 'scale-large', 'scale-xlarge');
+        html.classList.add(`scale-${uiScaleMode}`);
+        localStorage.setItem('shift_ui_scale', uiScaleMode);
+      }, [uiScaleMode]);
+
+      useEffect(() => {
+        const detectScreenType = () => {
+          const w = window.innerWidth;
+          const h = window.innerHeight;
+          const ratio = w / Math.max(1, h);
+          if (w < 580) {
+            setDeviceLabel('スマホ');
+          } else if (w < 1024) {
+            setDeviceLabel(ratio > 0.8 && ratio < 1.3 ? '折りたたみ/タブレット' : 'タブレット');
+          } else if (w >= 2200 || (w >= 1600 && ratio >= 2.2)) {
+            setDeviceLabel('ウルトラワイド');
+          } else if (w >= 1800) {
+            setDeviceLabel('大型モニター');
+          } else {
+            setDeviceLabel('ノートPC/標準');
+          }
+        };
+        detectScreenType();
+        window.addEventListener('resize', detectScreenType);
+        return () => window.removeEventListener('resize', detectScreenType);
+      }, []);
+
+      // メンバー配列が変化した際、selectedMemberIdsを適切に同期する
+      const prevMemberIdsRef = useRef(members.map(m => m.id));
+      useEffect(() => {
+        const currentIds = members.map(m => m.id);
+        const prevIds = prevMemberIdsRef.current;
+        const addedIds = currentIds.filter(id => !prevIds.includes(id));
+
+        setSelectedMemberIds(prevSelected => {
+          const validSelected = prevSelected.filter(id => currentIds.includes(id));
+          // 初回ロード等で全メンバーが入れ替わった場合は全員選択にする
+          if (validSelected.length === 0 && currentIds.length > 0) {
+            return currentIds;
+          }
+          return [...new Set([...validSelected, ...addedIds])];
+        });
+        prevMemberIdsRef.current = currentIds;
+      }, [members]);
 
       // --- 祝日APIの読み込み ---
       const [holidays, setHolidays] = useState({});
@@ -234,9 +324,7 @@
             setSyncStatus('loading');
             const docRef = db.collection("users").doc(currentUser.uid);
             
-            // リアルタイム監視を開始
             unsubscribeSnapshot = docRef.onSnapshot((docSnap) => {
-              // 自分が今書き込んだ直後のエコーバックは無視してチラつき防止
               if (isLocalChangeRef.current) {
                 isLocalChangeRef.current = false;
                 setSyncStatus('synced');
@@ -245,7 +333,14 @@
 
               if (docSnap.exists) {
                 const data = docSnap.data();
-                if (data.members) setMembers(data.members);
+                if (data.members) {
+                  // roleが未設定の既存データは'regular'(常勤)として補完
+                  const normalizedMembers = data.members.map(m => ({
+                    ...m,
+                    role: m.role || 'regular'
+                  }));
+                  setMembers(normalizedMembers);
+                }
                 if (data.allMonthlyData) setAllMonthlyData(data.allMonthlyData);
                 if (data.requiredWorkDays) setRequiredWorkDays(data.requiredWorkDays);
               }
@@ -268,7 +363,7 @@
         };
       }, []);
 
-      // --- データ保存用ラッパー関数（手動変更時のみ確実に保存） ---
+      // --- データ保存用ラッパー関数 ---
       const saveToFirebase = (dataToMerge) => {
         if (auth.currentUser && isDataLoadedRef.current) {
           isLocalChangeRef.current = true;
@@ -299,7 +394,6 @@
           return nextData;
         });
       };
-      // -------------------------------------------------------------
 
       const daysInMonth = useMemo(() => {
         return new Date(year, month, 0).getDate();
@@ -340,10 +434,9 @@
         }
       }, [darkMode]);
 
-      // ★重要修正: 過去の月データを勝手に削除する処理を取り除き、未作成の月だけ安全に初期化する
       useEffect(() => {
         setAllMonthlyData(prev => {
-          if (prev[currentKey]) return prev; // 既にデータがあれば何もしない（上書き防止）
+          if (prev[currentKey]) return prev;
           
           const initShifts = {};
           const initWishes = {};
@@ -449,6 +542,41 @@
 
       const preventContextMenu = (e) => {
         e.preventDefault();
+      };
+
+      // スタッフ選択フィルターのトグル操作
+      const toggleStaffSelection = (id) => {
+        setSelectedMemberIds(prev => {
+          if (prev.includes(id)) {
+            if (prev.length === 1) {
+              showToast('最低1名は選択してください');
+              return prev;
+            }
+            return prev.filter(item => item !== id);
+          } else {
+            return [...prev, id];
+          }
+        });
+      };
+
+      const selectAllStaff = () => setSelectedMemberIds(members.map(m => m.id));
+      const selectRegularStaffOnly = () => {
+        const regulars = members.filter(m => (m.role || 'regular') === 'regular').map(m => m.id);
+        if (regulars.length > 0) {
+          setSelectedMemberIds(regulars);
+          showToast(`常勤スタッフ（${regulars.length}名）を選択しました`);
+        } else {
+          showToast('常勤スタッフが登録されていません');
+        }
+      };
+      const selectSubStaffOnly = () => {
+        const subs = members.filter(m => m.role === 'sub').map(m => m.id);
+        if (subs.length > 0) {
+          setSelectedMemberIds(subs);
+          showToast(`サブスタッフ（${subs.length}名）を選択しました`);
+        } else {
+          showToast('サブスタッフが登録されていません');
+        }
       };
 
       const getPrevMonthLastDaysShifts = () => {
@@ -631,7 +759,14 @@
         reader.readAsDataURL(file);
       };
 
+      // ★選択中のスタッフのみを対象に自動シフト生成（非選択スタッフは現在のシフトを維持して後から手動補填可能）
       const generateAutoShifts = () => {
+        const targetMembers = members.filter(m => selectedMemberIds.includes(m.id));
+        if (targetMembers.length === 0) {
+          showToast('自動生成するスタッフを1名以上選択してください');
+          return;
+        }
+
         setIsGenerating(true);
 
         setTimeout(() => {
@@ -639,15 +774,23 @@
           const prevMonthInfo = getPrevMonthLastDaysShifts();
           const requiredOffDays = daysInMonth - requiredWorkDays;
 
+          // 全スタッフの枠を準備（非選択スタッフは現在のシフトをそのまま維持）
           members.forEach(m => {
-            newShifts[m.id] = {};
-            for (let d = 1; d <= daysInMonth; d++) {
-              newShifts[m.id][d] = null;
+            if (selectedMemberIds.includes(m.id)) {
+              newShifts[m.id] = {};
+              for (let d = 1; d <= daysInMonth; d++) {
+                newShifts[m.id][d] = null;
+              }
+            } else {
+              newShifts[m.id] = { ...(currentShifts[m.id] || {}) };
+              for (let d = 1; d <= daysInMonth; d++) {
+                if (!newShifts[m.id][d]) newShifts[m.id][d] = 'OFF';
+              }
             }
           });
 
-          // 希望の反映
-          members.forEach(m => {
+          // 選択中スタッフの希望を反映
+          targetMembers.forEach(m => {
             for (let d = 1; d <= daysInMonth; d++) {
               const wish = currentWishes[m.id]?.[d];
               if (wish?.type) {
@@ -656,9 +799,9 @@
             }
           });
 
-          // 前半・後半で休みの偏りを防止
+          // 前半・後半で休みの偏りを防止（選択中スタッフのみ）
           const halfMonth = Math.floor(daysInMonth / 2);
-          members.forEach((m, mIdx) => {
+          targetMembers.forEach((m, mIdx) => {
             const offNeededHalf = Math.round(requiredOffDays / 2);
 
             let firstHalfOffs = 0;
@@ -693,7 +836,7 @@
           });
 
           const findCandidateStrict = (day, shiftType, maxConsecutiveAllowed = 4) => {
-            const pool = members.filter(m => {
+            const pool = targetMembers.filter(m => {
               if (newShifts[m.id][day] !== null && newShifts[m.id][day] !== 'OFF') return false;
               if (currentWishes[m.id]?.[day]?.type === 'OFF') return false;
               const currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
@@ -744,7 +887,7 @@
             }
           });
 
-          members.forEach(m => {
+          targetMembers.forEach(m => {
             let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
 
             while (currentWorkCount < requiredWorkDays) {
@@ -776,36 +919,39 @@
             }
           });
 
-          members.forEach(m => {
+          targetMembers.forEach(m => {
             let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
 
-            while (currentWorkCount < requiredWorkDays) {
-              let openDays = [];
-              for (let d = 1; d <= daysInMonth; d++) {
-                if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
-                  const cons = getExactConsecutiveWorkDays(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
-                  if (cons <= 5) openDays.push({ day: d, cons });
-                }
-              }
-              if (openDays.length === 0) {
+            // サブスタッフ以外（常勤スタッフ）のみ、必須出勤日数までの強制埋めを行う
+            if ((m.role || 'regular') === 'regular') {
+              while (currentWorkCount < requiredWorkDays) {
+                let openDays = [];
                 for (let d = 1; d <= daysInMonth; d++) {
                   if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
-                    openDays.push({ day: d, cons: 99 });
+                    const cons = getExactConsecutiveWorkDays(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
+                    if (cons <= 5) openDays.push({ day: d, cons });
                   }
                 }
-              }
-              if (openDays.length === 0) {
-                for (let d = 1; d <= daysInMonth; d++) {
-                  if (newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') {
-                    openDays.push({ day: d, cons: 999 });
+                if (openDays.length === 0) {
+                  for (let d = 1; d <= daysInMonth; d++) {
+                    if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
+                      openDays.push({ day: d, cons: 99 });
+                    }
                   }
                 }
-              }
-              if (openDays.length === 0) break;
+                if (openDays.length === 0) {
+                  for (let d = 1; d <= daysInMonth; d++) {
+                    if (newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') {
+                      openDays.push({ day: d, cons: 999 });
+                    }
+                  }
+                }
+                if (openDays.length === 0) break;
 
-              openDays.sort((a, b) => a.cons - b.cons);
-              newShifts[m.id][openDays[0].day] = 'MIDDLE';
-              currentWorkCount++;
+                openDays.sort((a, b) => a.cons - b.cons);
+                newShifts[m.id][openDays[0].day] = 'MIDDLE';
+                currentWorkCount++;
+              }
             }
 
             while (currentWorkCount > requiredWorkDays) {
@@ -835,14 +981,14 @@
             }
           });
 
-          members.forEach(m => {
+          targetMembers.forEach(m => {
             for (let d = 1; d <= daysInMonth; d++) {
               if (!newShifts[m.id][d]) newShifts[m.id][d] = 'OFF';
             }
           });
 
           for (let d = 1; d <= daysInMonth; d++) {
-            const dayShifts = members.map(m => ({ id: m.id, shift: newShifts[m.id][d] }));
+            const dayShifts = targetMembers.map(m => ({ id: m.id, shift: newShifts[m.id][d] }));
             const earlyMembers = dayShifts.filter(x => x.shift === 'EARLY');
             const lateMembers = dayShifts.filter(x => x.shift === 'LATE');
 
@@ -865,7 +1011,11 @@
 
           setShiftsForCurrentMonth(newShifts);
           setIsGenerating(false);
-          showToast(`「6連勤以上絶対禁止＆前日より早い出勤回避」で作成完了！`);
+          showToast(
+            targetMembers.length === members.length
+              ? `全スタッフ（${targetMembers.length}名）のシフトを自動作成しました！`
+              : `選択中の${targetMembers.length}名分のシフトを自動作成しました！（他スタッフは維持）`
+          );
         }, 500);
       };
 
@@ -877,14 +1027,16 @@
           const memberShifts = currentShifts[m.id] || {};
           const memberWishes = currentWishes[m.id] || {};
           const actualDays = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
+          const isSub = m.role === 'sub';
 
-          if (actualDays !== requiredWorkDays) {
+          // ★サブスタッフは必須出勤日数の不一致エラーから除外（超過時のみ通知、未満はエラーにしない）
+          if (!isSub && actualDays !== requiredWorkDays) {
             list.push({
               type: 'EXACT_DAYS_MISMATCH',
               severity: 'danger',
               memberName: m.name,
               memberId: m.id,
-              message: `【必須日数不一致】${m.name}: 現在 ${actualDays}日出勤 （必須 ${requiredWorkDays}日）`
+              message: `【必須日数不一致】${m.name} (常勤): 現在 ${actualDays}日出勤 （必須 ${requiredWorkDays}日）`
             });
           }
 
@@ -992,9 +1144,10 @@
       };
 
       const exportToCsv = () => {
-        const headers = ['スタッフ名', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '他店舗', '事務局', '社内活動', '休み'];
+        const headers = ['スタッフ名', '区分', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '他店舗', '事務局', '社内活動', '休み'];
         const rows = members.map(m => {
           const memberShifts = currentShifts[m.id] || {};
+          const roleLabel = m.role === 'sub' ? 'サブ' : '常勤';
           const daysData = daysList.map(d => SHIFT_TYPES[memberShifts[d.day]]?.label || '休み');
           const workCount = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
           const earlyCount = Object.values(memberShifts).filter(s => s === 'EARLY').length;
@@ -1004,7 +1157,7 @@
           const officeCount = Object.values(memberShifts).filter(s => s === 'OFFICE').length;
           const trainingCount = Object.values(memberShifts).filter(s => s === 'TRAINING').length;
           const offCount = Object.values(memberShifts).filter(s => s === 'OFF').length;
-          return [m.name, ...daysData, workCount, earlyCount, middleCount, lateCount, otherStoreCount, officeCount, trainingCount, offCount];
+          return [m.name, roleLabel, ...daysData, workCount, earlyCount, middleCount, lateCount, otherStoreCount, officeCount, trainingCount, offCount];
         });
 
         const csvContent = '\uFEFF' + [headers, ...rows].map(e => e.map(cell => `"${cell}"`).join(',')).join('\n');
@@ -1024,12 +1177,12 @@
         try {
           const summaryData = {
             month: `${year}年${month}月`,
-            requiredDays: requiredWorkDays,
+            requiredDaysForRegular: requiredWorkDays,
             members: members.map(m => {
               const mShifts = currentShifts[m.id] || {};
               const workDays = Object.values(mShifts).filter(s => s && s !== 'OFF').length;
               const shiftsDetail = daysList.map(d => `${d.day}日:${SHIFT_TYPES[mShifts[d.day]]?.short || '休'}`).join(', ');
-              return { name: m.name, workDays, schedule: shiftsDetail };
+              return { name: m.name, role: m.role === 'sub' ? 'サブ(日数制限なし)' : '常勤', workDays, schedule: shiftsDetail };
             }),
             warningsCount: warnings.length,
             warningList: warnings.map(w => w.message)
@@ -1044,7 +1197,7 @@
 ・店長がひと目で理解できるよう、段落を美しく整理して回答してください。
 
 【評価内容】
-1. 出勤日数の完全一致（目標: ${requiredWorkDays}日）
+1. 常勤スタッフの出勤日数の完全一致（目標: ${requiredWorkDays}日 ※サブスタッフは未満でもOK）
 2. 前日より早い出勤（中→早、遅→中、遅→早）の有無
 3. 連勤（6連勤以上絶対禁止、4連勤以下の維持）
 4. 週2日休みのペースとカレンダー前後のバランス
@@ -1072,9 +1225,9 @@ ${JSON.stringify(summaryData, null, 2)}
       const handleAddMember = () => {
         if (!newMemberName.trim()) return;
         const newId = 'm_' + Date.now();
-        updateMembers([...members, { id: newId, name: newMemberName.trim() }]);
+        updateMembers([...members, { id: newId, name: newMemberName.trim(), role: newMemberRole }]);
         setNewMemberName('');
-        showToast(`${newMemberName.trim()} さんを追加しました`);
+        showToast(`${newMemberName.trim()} さん（${newMemberRole === 'sub' ? 'サブ' : '常勤'}）を追加しました`);
       };
 
       const handleDeleteMember = (id, name) => {
@@ -1094,6 +1247,17 @@ ${JSON.stringify(summaryData, null, 2)}
         showToast('スタッフ名を更新しました');
       };
 
+      const handleToggleMemberRole = (id) => {
+        updateMembers(members.map(m => {
+          if (m.id === id) {
+            const nextRole = (m.role || 'regular') === 'regular' ? 'sub' : 'regular';
+            showToast(`${m.name} を「${nextRole === 'sub' ? 'サブ' : '常勤'}」に変更しました`);
+            return { ...m, role: nextRole };
+          }
+          return m;
+        }));
+      };
+
       const moveMember = (index, direction) => {
         if (index + direction < 0 || index + direction >= members.length) return;
         const newMembers = [...members];
@@ -1103,22 +1267,106 @@ ${JSON.stringify(summaryData, null, 2)}
         updateMembers(newMembers);
       };
 
-      const filteredMembers = members.filter(m => m.name.toLowerCase().includes(staffFilter.toLowerCase()));
+      // 選択フィルター適用後のメンバー一覧
+      const displayedMembers = members.filter(m => selectedMemberIds.includes(m.id));
+      const isCompact = viewScale === 'compact';
+
+      // 共通のスタッフ選択フィルターバーコンポーネント
+      const StaffFilterBar = ({ showAutoGenHint = false }) => (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center space-x-2">
+              <Filter className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span className="text-xs font-extrabold text-slate-700 dark:text-slate-200">
+                スタッフ表示 ＆ 自動生成の対象選択 ({selectedMemberIds.length}/{members.length}名)
+              </span>
+              {showAutoGenHint && (
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 hidden md:inline">
+                  ※ここでONにしたスタッフだけで「AI自動シフト生成」を行い、残りのスタッフを手動補填できます
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center space-x-1.5 text-xs">
+              <button
+                onClick={selectAllStaff}
+                className={`px-2.5 py-1 rounded-lg font-bold border transition-colors ${
+                  selectedMemberIds.length === members.length
+                    ? 'bg-slate-800 text-white border-slate-800 dark:bg-slate-200 dark:text-slate-900'
+                    : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700'
+                }`}
+              >
+                全員 ({members.length})
+              </button>
+              <button
+                onClick={selectRegularStaffOnly}
+                className="px-2.5 py-1 rounded-lg font-bold border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800 transition-colors"
+              >
+                常勤のみ
+              </button>
+              <button
+                onClick={selectSubStaffOnly}
+                className="px-2.5 py-1 rounded-lg font-bold border bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 dark:bg-purple-950/50 dark:text-purple-300 dark:border-purple-800 transition-colors"
+              >
+                サブのみ
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-700/60">
+            {members.map(m => {
+              const isSelected = selectedMemberIds.includes(m.id);
+              const isSub = m.role === 'sub';
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => toggleStaffSelection(m.id)}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all flex items-center space-x-1.5 ${
+                    isSelected
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                      : 'bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-slate-700 hover:opacity-80'
+                  }`}
+                >
+                  <span className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${
+                    isSelected ? 'bg-white text-emerald-600 border-white' : 'border-slate-300 dark:border-slate-600'
+                  }`}>
+                    {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                  </span>
+                  <span>{m.name}</span>
+                  <span className={`text-[9px] px-1 py-0.2 rounded font-extrabold ${
+                    isSelected
+                      ? isSub ? 'bg-purple-800/80 text-purple-100' : 'bg-emerald-800/70 text-emerald-100'
+                      : isSub ? 'bg-purple-100 text-purple-600 dark:bg-purple-950 dark:text-purple-400' : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                  }`}>
+                    {isSub ? 'サブ' : '常勤'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
 
       return (
         <div className={`min-h-screen font-sans ${darkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}`}>
           
-          {/* ヘッダー */}
-          <header className="sticky top-0 z-40 backdrop-blur-md bg-white/95 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 px-4 py-3 shadow-sm">
-            <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+          {/* ヘッダー (大画面・ウルトラワイドでも見やすいよう横幅を広く活用) */}
+          <header className="sticky top-0 z-40 backdrop-blur-md bg-white/95 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 px-4 py-2.5 shadow-sm">
+            <div className="w-full max-w-[98vw] 2xl:max-w-[96vw] mx-auto flex flex-wrap items-center justify-between gap-3">
               
               <div className="flex items-center space-x-3">
                 <div className="p-2 bg-emerald-600 rounded-xl text-white shadow-sm">
                   <Calendar className="w-5 h-5" />
                 </div>
                 <div>
-                  <h1 className="text-lg font-extrabold leading-tight tracking-tight text-slate-800 dark:text-slate-100">ShiftCraft</h1>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">6連勤禁止・早い出勤回避・月曜始まりカレンダー・きれいなAI診断</p>
+                  <div className="flex items-center space-x-2">
+                    <h1 className="text-lg font-extrabold leading-tight tracking-tight text-slate-800 dark:text-slate-100">ShiftCraft</h1>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hidden sm:inline-flex items-center space-x-1">
+                      <Monitor className="w-3 h-3 mr-1 text-emerald-600" />
+                      {deviceLabel}最適化
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">6連勤禁止・早い出勤回避・常勤/サブ管理・選択自動シフト生成</p>
                 </div>
               </div>
 
@@ -1157,9 +1405,32 @@ ${JSON.stringify(summaryData, null, 2)}
               </div>
 
               {/* ボタン操作 */}
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center gap-2">
 
-                {/* --- クラウド同期ステータス ＆ ログインボタン --- */}
+                {/* 画面サイズスケール切替 */}
+                <div className="hidden lg:flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold">
+                  {[
+                    { id: 'auto', label: '自動' },
+                    { id: 'normal', label: '標準' },
+                    { id: 'large', label: '大' },
+                    { id: 'xlarge', label: '特大' },
+                  ].map(s => (
+                    <button
+                      key={s.id}
+                      onClick={() => setUiScaleMode(s.id)}
+                      className={`px-2 py-0.5 rounded-lg transition-colors ${
+                        uiScaleMode === s.id
+                          ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                      }`}
+                      title="画面の文字・枠のサイズ倍率を調整"
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* クラウド同期ステータス ＆ ログインボタン */}
                 {user ? (
                   <div className="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-700">
                     <div className="flex items-center space-x-1">
@@ -1189,7 +1460,13 @@ ${JSON.stringify(summaryData, null, 2)}
                   className="flex items-center space-x-1.5 bg-orange-500 hover:bg-orange-600 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-sm active:scale-95 transition-all disabled:opacity-50"
                 >
                   <Sparkles className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
-                  <span>{isGenerating ? 'シフト自動生成中...' : 'AI自動シフト生成'}</span>
+                  <span>
+                    {isGenerating
+                      ? '自動生成中...'
+                      : selectedMemberIds.length === members.length
+                      ? 'AI自動シフト生成 (全員)'
+                      : `AI自動シフト生成 (${selectedMemberIds.length}名分)`}
+                  </span>
                 </button>
 
                 <button
@@ -1213,8 +1490,8 @@ ${JSON.stringify(summaryData, null, 2)}
           </header>
 
           {/* タブナビゲーション */}
-          <nav className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sticky top-[57px] z-30 shadow-sm">
-            <div className="max-w-7xl mx-auto flex space-x-1 overflow-x-auto scrollbar-none py-1.5">
+          <nav className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sticky top-[53px] z-30 shadow-sm">
+            <div className="w-full max-w-[98vw] 2xl:max-w-[96vw] mx-auto flex space-x-1 overflow-x-auto scrollbar-none py-1.5">
               <button
                 onClick={() => setActiveTab('matrix')}
                 className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
@@ -1282,15 +1559,18 @@ ${JSON.stringify(summaryData, null, 2)}
             </div>
           </nav>
 
-          <main className="max-w-7xl mx-auto p-4 space-y-4">
+          <main className="w-full max-w-[98vw] 2xl:max-w-[96vw] mx-auto p-3 sm:p-4 space-y-4">
 
             {/* 1. シフト表 (マトリクス) タブ */}
             {activeTab === 'matrix' && (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 
+                {/* スタッフ選択フィルターバー */}
+                <StaffFilterBar showAutoGenHint={true} />
+
                 {/* 凡例 ＆ 条件ルールカード */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <div className="md:col-span-3 bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-center space-y-2.5">
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+                  <div className="lg:col-span-3 bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-center space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-1.5 text-xs">
                         <span className="font-bold text-slate-500 dark:text-slate-400 mr-1 text-[11px]">区分:</span>
@@ -1302,71 +1582,57 @@ ${JSON.stringify(summaryData, null, 2)}
                         ))}
                       </div>
 
-                      {/* スタッフ絞り込み検索 */}
-                      <div className="flex items-center bg-slate-100 dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700">
-                        <Search className="w-3.5 h-3.5 text-slate-400 mr-2" />
-                        <input
-                          type="text"
-                          placeholder="スタッフ絞り込み..."
-                          value={staffFilter}
-                          onChange={(e) => setStaffFilter(e.target.value)}
-                          className="bg-transparent text-xs outline-none w-28 placeholder:text-slate-400 text-slate-700 dark:text-slate-200"
-                        />
-                        {staffFilter && (
-                          <button onClick={() => setStaffFilter('')} className="text-slate-400 hover:text-slate-600 ml-1">
-                            <X className="w-3 h-3" />
-                          </button>
-                        )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold">
+                          <span className="text-slate-400">希望表示:</span>
+                          <span className="px-2 py-0.5 rounded bg-indigo-600 text-white shadow-sm">早希望 (一致)</span>
+                          <span className="px-2 py-0.5 rounded bg-rose-600 text-white shadow-sm">休希望 (不一致)</span>
+                        </div>
+                        
+                        <button
+                          onClick={() => setViewScale(v => v === 'normal' ? 'compact' : 'normal')}
+                          className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors shadow-sm ${
+                            isCompact
+                              ? 'bg-emerald-600 border-emerald-600 text-white'
+                              : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          {isCompact ? <ZoomIn className="w-3.5 h-3.5" /> : <ZoomOut className="w-3.5 h-3.5" />}
+                          <span>{isCompact ? '通常サイズに戻す' : '全体を一覧 (1画面に縮小)'}</span>
+                        </button>
                       </div>
-                    </div>
-                    
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-700/60">
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
-                        <span className="text-slate-400">希望表示の見方:</span>
-                        <span className="px-2 py-0.5 rounded bg-indigo-600 text-white shadow-sm">★早希望 (希望通り)</span>
-                        <span className="px-2 py-0.5 rounded bg-rose-600 text-white shadow-sm">!休希望 (希望と不一致)</span>
-                      </div>
-                      
-                      <button
-                        onClick={() => setViewScale(v => v === 'normal' ? 'compact' : 'normal')}
-                        className={`flex items-center space-x-1.5 px-3 py-1 rounded-xl border text-xs font-bold transition-colors shadow-sm ${
-                          viewScale === 'compact'
-                            ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300'
-                            : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
-                        }`}
-                      >
-                        {viewScale === 'compact' ? <ZoomIn className="w-3.5 h-3.5" /> : <ZoomOut className="w-3.5 h-3.5" />}
-                        <span>{viewScale === 'compact' ? '通常倍率に戻す' : '全体を一覧 (縮小)'}</span>
-                      </button>
                     </div>
                   </div>
 
                   <div className="bg-slate-50 dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm flex items-center justify-between">
                     <div>
-                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">必須出勤日数</span>
+                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">常勤 必須出勤日数</span>
                       <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">{requiredWorkDays} 日</span>
                     </div>
                     <div className="text-right">
-                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">登録人数</span>
-                      <span className="text-xl font-black text-slate-800 dark:text-slate-200">{members.length} 名</span>
+                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">表示中 / 全スタッフ</span>
+                      <span className="text-xl font-black text-slate-800 dark:text-slate-200">{displayedMembers.length} / {members.length} 名</span>
                     </div>
                   </div>
                 </div>
 
-                {/* シフト表テーブル */}
+                {/* シフト表テーブル（isCompact時は table-fixed で横スクロールなしに1画面完全収容） */}
                 <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md overflow-hidden">
-                  <div className="overflow-x-auto relative" style={{ zoom: viewScale === 'compact' ? 0.78 : 1 }}>
-                    <table className="w-full border-collapse text-xs text-left">
+                  <div className="overflow-x-auto relative">
+                    <table className={`w-full border-collapse text-xs text-left ${isCompact ? 'table-fixed' : ''}`}>
                       <thead>
                         <tr className="bg-slate-100 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
-                          {/* ★貫通防止のため z-30 と右ボーダー・影を設定 */}
-                          <th className="sticky left-0 z-30 bg-slate-100 dark:bg-slate-900 p-2.5 font-extrabold text-slate-700 dark:text-slate-200 min-w-[120px] border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                          <th className={`sticky left-0 z-30 bg-slate-100 dark:bg-slate-900 font-extrabold text-slate-700 dark:text-slate-200 border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                            isCompact ? 'w-[105px] p-1.5 text-[11px]' : 'min-w-[140px] p-2.5'
+                          }`}>
                             スタッフ名
                           </th>
                           {daysList.map(d => (
                             <th
                               key={d.day}
-                              className={`p-1 text-center min-w-[44px] font-bold border-l border-slate-200/60 dark:border-slate-700/60 ${
+                              className={`text-center font-bold border-l border-slate-200/60 dark:border-slate-700/60 ${
+                                isCompact ? 'p-0.5' : 'p-1 min-w-[44px]'
+                              } ${
                                 d.isDayOff
                                   ? 'bg-rose-50/80 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400'
                                   : d.isSaturday
@@ -1375,27 +1641,40 @@ ${JSON.stringify(summaryData, null, 2)}
                               }`}
                               title={d.isHoliday ? '祝日' : ''}
                             >
-                              <div className="text-xs leading-tight font-extrabold">{d.day}</div>
-                              <div className="text-[10px] font-bold leading-tight">{d.dayOfWeek}</div>
+                              <div className={`${isCompact ? 'text-[10px]' : 'text-xs'} leading-tight font-extrabold`}>{d.day}</div>
+                              <div className={`${isCompact ? 'text-[9px]' : 'text-[10px]'} font-bold leading-tight`}>{d.dayOfWeek}</div>
                             </th>
                           ))}
-                          <th className="p-2 text-center font-extrabold text-slate-700 dark:text-slate-200 min-w-[60px] bg-slate-200/50 dark:bg-slate-800/80 border-l border-slate-300 dark:border-slate-700">
-                            出勤数
+                          <th className={`text-center font-extrabold text-slate-700 dark:text-slate-200 bg-slate-200/50 dark:bg-slate-800/80 border-l border-slate-300 dark:border-slate-700 ${
+                            isCompact ? 'w-[44px] p-1 text-[10px]' : 'min-w-[64px] p-2'
+                          }`}>
+                            出勤
                           </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 dark:divide-slate-700/60">
-                        {filteredMembers.map(m => {
+                        {displayedMembers.map(m => {
                           const memberShifts = currentShifts[m.id] || {};
                           const memberWishes = currentWishes[m.id] || {};
                           const actualWorkDays = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
+                          const isSub = m.role === 'sub';
                           const isMatchRequired = actualWorkDays === requiredWorkDays;
 
                           return (
                             <tr key={m.id} className="group hover:bg-slate-50/80 dark:hover:bg-slate-700/30 transition-colors">
-                              {/* ★貫通防止のため z-20 と不透明背景、右ボーダー・影を徹底 */}
-                              <td className="sticky left-0 z-20 bg-white dark:bg-slate-800 group-hover:bg-slate-50 dark:group-hover:bg-slate-800 p-2.5 font-extrabold text-slate-800 dark:text-slate-100 truncate max-w-[130px] border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                {m.name}
+                              <td className={`sticky left-0 z-20 bg-white dark:bg-slate-800 group-hover:bg-slate-50 dark:group-hover:bg-slate-800 font-extrabold text-slate-800 dark:text-slate-100 border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                                isCompact ? 'p-1.5 text-[11px]' : 'p-2.5'
+                              }`}>
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="truncate">{m.name}</span>
+                                  <span className={`shrink-0 text-[9px] px-1 py-0.2 rounded font-extrabold ${
+                                    isSub
+                                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                                      : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                  }`}>
+                                    {isSub ? 'サブ' : '常勤'}
+                                  </span>
+                                </div>
                               </td>
                               {daysList.map(d => {
                                 const shiftId = memberShifts[d.day] || 'OFF';
@@ -1414,41 +1693,51 @@ ${JSON.stringify(summaryData, null, 2)}
                                   alertClass = "ring-2 ring-orange-400 bg-orange-50 dark:bg-orange-900/40 animate-pulse";
                                 }
 
+                                const wishShortText = wish ? (wish.type === 'OFF' ? '休' : SHIFT_TYPES[wish.type]?.short) : '';
+
                                 return (
                                   <td
                                     key={d.day}
                                     onClick={() => setSelectedCell({ memberId: m.id, memberName: m.name, day: d.day, dayOfWeek: d.dayOfWeek, currentShift: shiftId })}
-                                    className={`p-1 text-center border-l border-slate-100 dark:border-slate-700/40 cursor-pointer hover:bg-slate-100/70 dark:hover:bg-slate-700/50 transition-colors align-middle ${
+                                    className={`${isCompact ? 'p-0.5' : 'p-1'} text-center border-l border-slate-100 dark:border-slate-700/40 cursor-pointer hover:bg-slate-100/70 dark:hover:bg-slate-700/50 transition-colors align-middle ${
                                       d.isDayOff ? 'bg-rose-50/20 dark:bg-rose-950/10' : d.isSaturday ? 'bg-sky-50/20 dark:bg-sky-950/10' : ''
                                     }`}
                                   >
-                                    {/* ★視認性を大幅改善した2段構えレイアウト（z-indexを使わず貫通を根本防止） */}
-                                    <div className="flex flex-col items-center justify-center space-y-0.5 min-h-[42px]">
+                                    <div className={`flex flex-col items-center justify-center space-y-0.5 ${isCompact ? 'min-h-[34px]' : 'min-h-[42px]'}`}>
                                       {wish ? (
-                                        <div className={`w-full text-[10px] font-extrabold px-1 py-0.5 rounded leading-none tracking-tighter shadow-sm whitespace-nowrap ${
+                                        <div className={`w-full font-extrabold rounded leading-none tracking-tighter shadow-sm whitespace-nowrap overflow-hidden ${
+                                          isCompact ? 'text-[8px] py-0.5 px-0' : 'text-[10px] px-1 py-0.5'
+                                        } ${
                                           isWishMatched
                                             ? 'bg-indigo-600 text-white dark:bg-indigo-500'
                                             : 'bg-rose-600 text-white animate-bounce'
                                         }`}>
-                                          {isWishMatched ? '★' : '!'}{wish.type === 'OFF' ? '休' : SHIFT_TYPES[wish.type]?.short}希望
+                                          {isCompact ? `${wishShortText}希` : `${wishShortText}希望`}
                                         </div>
                                       ) : (
-                                        <div className="h-[14px]" /> /* 希望がない日も高さを揃えてガタつきを防止 */
+                                        <div className={isCompact ? 'h-[11px]' : 'h-[14px]'} />
                                       )}
                                       
-                                      <div className={`w-full py-1 rounded-md text-xs font-extrabold border ${shift.bg} ${shift.text} ${shift.border} shadow-sm ${alertClass}`}>
+                                      <div className={`w-full rounded-md font-extrabold border ${shift.bg} ${shift.text} ${shift.border} shadow-sm ${alertClass} ${
+                                        isCompact ? 'py-0.5 text-[11px]' : 'py-1 text-xs'
+                                      }`}>
                                         {shift.short}
                                       </div>
                                     </div>
                                   </td>
                                 );
                               })}
-                              <td className="p-2 text-center font-black bg-slate-50/50 dark:bg-slate-800/40 border-l border-slate-200 dark:border-slate-700 align-middle">
-                                <span className={`inline-block px-2 py-1 rounded-md text-xs ${
-                                  isMatchRequired 
-                                    ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-100/80 dark:bg-emerald-950/60' 
-                                    : 'text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950/60 font-black animate-pulse'
-                                }`}>
+                              <td className={`${isCompact ? 'p-1' : 'p-2'} text-center font-black bg-slate-50/50 dark:bg-slate-800/40 border-l border-slate-200 dark:border-slate-700 align-middle`}>
+                                <span
+                                  className={`inline-block rounded-md ${isCompact ? 'px-1 py-0.5 text-[11px]' : 'px-2 py-1 text-xs'} ${
+                                    isSub
+                                      ? 'text-purple-700 dark:text-purple-300 bg-purple-100/70 dark:bg-purple-950/60'
+                                      : isMatchRequired 
+                                      ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-100/80 dark:bg-emerald-950/60' 
+                                      : 'text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950/60 font-black animate-pulse'
+                                  }`}
+                                  title={isSub ? 'サブスタッフ（必須日数の制限なし）' : `常勤スタッフ（必須: ${requiredWorkDays}日）`}
+                                >
                                   {actualWorkDays}
                                 </span>
                               </td>
@@ -1456,10 +1745,12 @@ ${JSON.stringify(summaryData, null, 2)}
                           );
                         })}
 
-                        {/* 日別出勤合計 */}
+                        {/* 日別出勤合計（店舗全体の合計を常に把握できるよう全メンバーで集計） */}
                         <tr className="bg-slate-100 dark:bg-slate-900 border-t-2 border-slate-300 dark:border-slate-700 font-bold text-[11px]">
-                          <td className="sticky left-0 z-20 bg-slate-100 dark:bg-slate-900 p-2.5 text-slate-700 dark:text-slate-300 border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] align-middle">
-                            出勤合計
+                          <td className={`sticky left-0 z-20 bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] align-middle ${
+                            isCompact ? 'p-1.5 text-[10px]' : 'p-2.5'
+                          }`}>
+                            全体出勤計
                           </td>
                           {daysList.map(d => {
                             const dayShifts = members.map(m => currentShifts[m.id]?.[d.day]);
@@ -1474,13 +1765,17 @@ ${JSON.stringify(summaryData, null, 2)}
                             return (
                               <td
                                 key={d.day}
-                                className={`p-1 text-center border-l border-slate-200 dark:border-slate-700 align-middle ${
+                                className={`${isCompact ? 'p-0.5' : 'p-1'} text-center border-l border-slate-200 dark:border-slate-700 align-middle ${
                                   isShortage ? 'bg-rose-100/80 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300' : 'text-slate-700 dark:text-slate-300'
                                 }`}
                               >
-                                <div className="font-black text-xs leading-tight">{coreCount}名</div>
+                                <div className={`font-black leading-tight ${isCompact ? 'text-[10px]' : 'text-xs'}`}>
+                                  {isCompact ? coreCount : `${coreCount}名`}
+                                </div>
                                 {otherCount > 0 && (
-                                  <div className="text-[10px] font-bold text-teal-700 dark:text-teal-400 bg-teal-100/60 dark:bg-teal-950/50 rounded px-0.5 mt-0.5 leading-tight">
+                                  <div className={`font-bold text-teal-700 dark:text-teal-400 bg-teal-100/60 dark:bg-teal-950/50 rounded px-0.5 mt-0.5 leading-tight ${
+                                    isCompact ? 'text-[8px]' : 'text-[10px]'
+                                  }`}>
                                     他:{otherCount}
                                   </div>
                                 )}
@@ -1509,11 +1804,11 @@ ${JSON.stringify(summaryData, null, 2)}
                       )}
                       <div>
                         <span className={`text-xs font-black ${warnings.length === 0 ? 'text-emerald-800 dark:text-emerald-200' : 'text-rose-800 dark:text-rose-200'}`}>
-                          {warnings.length === 0 ? '全ルール点検クリア (出勤日数・連勤・早い出勤・希望の一致の違反なし)' : `ルール点検アラート (${warnings.length}件検出)`}
+                          {warnings.length === 0 ? '全ルール点検クリア (常勤の出勤日数・連勤・早い出勤・希望の一致の違反なし)' : `ルール点検アラート (${warnings.length}件検出)`}
                         </span>
                         <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
                           {warnings.length === 0
-                            ? '中→早・遅→中・遅→早や6連勤以上、希望との不一致は発生していません'
+                            ? '中→早・遅→中・遅→早や6連勤以上、希望との不一致は発生していません（サブスタッフは必須日数制限から除外）'
                             : '以下の項目に改善が必要です（該当セルは赤枠・オレンジ枠で強調されています）'}
                         </span>
                       </div>
@@ -1553,14 +1848,17 @@ ${JSON.stringify(summaryData, null, 2)}
             {activeTab === 'wishes' && (
               <div className="space-y-4">
                 
+                {/* スタッフ選択フィルターバー（自動生成の対象選択としても機能） */}
+                <StaffFilterBar showAutoGenHint={true} />
+
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div>
                     <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
                       <Settings className="w-5 h-5 text-emerald-600" />
-                      <span>必須出勤日数（絶対厳守）</span>
+                      <span>常勤スタッフの必須出勤日数</span>
                     </h2>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                      自動生成時に上回り・下回りを一切許容せず、全員の出勤日数をぴったり一致させます
+                      常勤スタッフは自動生成時にこの日数へぴったり一致させます（「サブ」スタッフは必須日数の制限を受けません）
                     </p>
                   </div>
                   <div className="flex items-center space-x-2 bg-slate-50 dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
@@ -1667,15 +1965,26 @@ ${JSON.stringify(summaryData, null, 2)}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {members.map(m => {
+                {/* 大画面・ウルトラワイドでは3列グリッドにして一覧性を向上 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
+                  {displayedMembers.map(m => {
                     const memberWishes = currentWishes[m.id] || {};
                     const wishCount = Object.keys(memberWishes).length;
+                    const isSub = m.role === 'sub';
 
                     return (
                       <div key={m.id} className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-3">
                         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2">
-                          <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100">{m.name}</span>
+                          <div className="flex items-center space-x-2">
+                            <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100">{m.name}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-extrabold ${
+                              isSub
+                                ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
+                                : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                            }`}>
+                              {isSub ? 'サブ' : '常勤'}
+                            </span>
+                          </div>
                           <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
                             希望指定: {wishCount}件
                           </span>
@@ -1748,7 +2057,7 @@ ${JSON.stringify(summaryData, null, 2)}
                         <span>シフトルール＆点検検証結果</span>
                       </h2>
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        必須出勤日数の過不足・前日より早い出勤・5連勤注意・6連勤以上の禁止違反（絶対判定）のアラート一覧です。
+                        常勤スタッフの必須出勤日数過不足・前日より早い出勤・5連勤注意・6連勤以上の禁止違反のアラート一覧です（サブスタッフは必須日数チェックから除外）。
                       </p>
                     </div>
                     <div className="text-right">
@@ -1762,7 +2071,7 @@ ${JSON.stringify(summaryData, null, 2)}
                   <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-8 text-center space-y-2">
                     <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
                     <h3 className="text-base font-bold text-emerald-800 dark:text-emerald-200">すべてのシフトルールをクリアしています！</h3>
-                    <p className="text-xs text-emerald-600 dark:text-emerald-400">全員の必須出勤日数が一致し、連勤・前日より早い出勤の違反はありません。</p>
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">常勤スタッフの必須出勤日数が一致し、連勤・前日より早い出勤の違反はありません。</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -1800,7 +2109,7 @@ ${JSON.stringify(summaryData, null, 2)}
                       </div>
                       <div>
                         <h2 className="text-lg font-extrabold">Gemini シフトコンサルタント</h2>
-                        <p className="text-xs text-slate-300">6連勤以上の完全防止・前日より早い出勤・週休2日ペースの遵守状態をAI診断します</p>
+                        <p className="text-xs text-slate-300">6連勤以上の完全防止・前日より早い出勤・常勤/サブのバランスをAI診断します</p>
                       </div>
                     </div>
 
@@ -1853,19 +2162,48 @@ ${JSON.stringify(summaryData, null, 2)}
             {activeTab === 'members' && (
               <div className="space-y-4">
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
-                  <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
-                    <Settings className="w-5 h-5 text-emerald-600" />
-                    <span>スタッフ管理（並び替え・追加・削除）</span>
-                  </h2>
+                  <div>
+                    <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
+                      <Settings className="w-5 h-5 text-emerald-600" />
+                      <span>スタッフ管理（常勤・サブ設定 / 並び替え / 追加・削除）</span>
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      「常勤 / サブ」バッジをクリックすると区分を切り替えられます。「サブ」のスタッフは必須出勤日数未満でもエラーになりません。
+                    </p>
+                  </div>
 
-                  <div className="flex items-center space-x-2 pt-2">
+                  <div className="flex flex-wrap items-center gap-2 pt-2">
                     <input
                       type="text"
                       placeholder="新しいスタッフ名..."
                       value={newMemberName}
                       onChange={(e) => setNewMemberName(e.target.value)}
-                      className="flex-1 p-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      className="flex-1 min-w-[180px] p-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
+                    <div className="flex items-center bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold">
+                      <button
+                        type="button"
+                        onClick={() => setNewMemberRole('regular')}
+                        className={`px-3 py-1 rounded-lg transition-colors ${
+                          newMemberRole === 'regular'
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        常勤
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewMemberRole('sub')}
+                        className={`px-3 py-1 rounded-lg transition-colors ${
+                          newMemberRole === 'sub'
+                            ? 'bg-purple-600 text-white shadow-sm'
+                            : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        サブ
+                      </button>
+                    </div>
                     <button
                       onClick={handleAddMember}
                       className="flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all"
@@ -1876,65 +2214,83 @@ ${JSON.stringify(summaryData, null, 2)}
                   </div>
 
                   <div className="space-y-2 pt-2">
-                    {members.map((m, idx) => (
-                      <div key={m.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-700">
-                        {editingMemberId === m.id ? (
-                          <div className="flex items-center space-x-2 flex-1 mr-2">
-                            <input
-                              type="text"
-                              value={editingMemberName}
-                              onChange={(e) => setEditingMemberName(e.target.value)}
-                              className="p-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 rounded-lg flex-1"
-                            />
+                    {members.map((m, idx) => {
+                      const isSub = m.role === 'sub';
+                      return (
+                        <div key={m.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-700">
+                          {editingMemberId === m.id ? (
+                            <div className="flex items-center space-x-2 flex-1 mr-2">
+                              <input
+                                type="text"
+                                value={editingMemberName}
+                                onChange={(e) => setEditingMemberName(e.target.value)}
+                                className="p-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 rounded-lg flex-1"
+                              />
+                              <button
+                                onClick={() => handleUpdateMemberName(m.id)}
+                                className="p-1.5 bg-emerald-600 text-white rounded-lg text-xs"
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center space-x-3">
+                              <button
+                                onClick={() => handleToggleMemberRole(m.id)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-extrabold border transition-all hover:scale-105 ${
+                                  isSub
+                                    ? 'bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800'
+                                    : 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
+                                }`}
+                                title="クリックして「常勤 / サブ」を切り替え"
+                              >
+                                {isSub ? 'サブ (日数制限なし)' : '常勤 (必須日数対象)'}
+                              </button>
+                              <span className="font-bold text-xs text-slate-800 dark:text-slate-200">{m.name}</span>
+                            </div>
+                          )}
+
+                          <div className="flex items-center space-x-1">
+                            <div className="flex items-center mr-3 border-r border-slate-300 dark:border-slate-600 pr-3">
+                              <button
+                                onClick={() => moveMember(idx, -1)}
+                                disabled={idx === 0}
+                                className="p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg disabled:opacity-30 transition-colors"
+                                title="上に移動"
+                              >
+                                <ArrowUp className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => moveMember(idx, 1)}
+                                disabled={idx === members.length - 1}
+                                className="p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg disabled:opacity-30 transition-colors"
+                                title="下に移動"
+                              >
+                                <ArrowDown className="w-4 h-4" />
+                              </button>
+                            </div>
+
                             <button
-                              onClick={() => handleUpdateMemberName(m.id)}
-                              className="p-1.5 bg-emerald-600 text-white rounded-lg text-xs"
+                              onClick={() => {
+                                setEditingMemberId(m.id);
+                                setEditingMemberName(m.name);
+                              }}
+                              className="p-1.5 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg"
+                              title="名前を編集"
                             >
-                              <Check className="w-4 h-4" />
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteMember(m.id, m.name)}
+                              className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg"
+                              title="削除"
+                            >
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
-                        ) : (
-                          <span className="font-bold text-xs text-slate-800 dark:text-slate-200">{m.name}</span>
-                        )}
-
-                        <div className="flex items-center space-x-1">
-                          <div className="flex items-center mr-3 border-r border-slate-300 dark:border-slate-600 pr-3">
-                            <button
-                              onClick={() => moveMember(idx, -1)}
-                              disabled={idx === 0}
-                              className="p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg disabled:opacity-30 transition-colors"
-                              title="上に移動"
-                            >
-                              <ArrowUp className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => moveMember(idx, 1)}
-                              disabled={idx === members.length - 1}
-                              className="p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg disabled:opacity-30 transition-colors"
-                              title="下に移動"
-                            >
-                              <ArrowDown className="w-4 h-4" />
-                            </button>
-                          </div>
-
-                          <button
-                            onClick={() => {
-                              setEditingMemberId(m.id);
-                              setEditingMemberName(m.name);
-                            }}
-                            className="p-1.5 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteMember(m.id, m.name)}
-                            className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                 </div>
