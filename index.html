@@ -109,6 +109,7 @@
     const ArrowUp = ({ className }) => <IconBase className={className} d="m18 15-6-6-6 6" />;
     const ArrowDown = ({ className }) => <IconBase className={className} d="m6 9 6 6 6-6" />;
     const Search = ({ className }) => <IconBase className={className} d={["M21 21l-4.35-4.35", "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z"]} />;
+    const Cloud = ({ className }) => <IconBase className={className} d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />;
 
     const SHIFT_TYPES = {
       EARLY: { id: 'EARLY', label: '早番', time: '9:00-18:00', short: '早', bg: 'bg-orange-100 dark:bg-orange-950/70', text: 'text-orange-700 dark:text-orange-300', border: 'border-orange-300 dark:border-orange-800' },
@@ -163,19 +164,11 @@
     };
 
     function App() {
-      // ログイン状態とデータ復元の管理
+      // --- ログイン状態とリアルタイム同期の管理 ---
       const [user, setUser] = useState(null);
-      const [isDataLoaded, setIsDataLoaded] = useState(false);
-      const userRef = useRef(null);
+      const [syncStatus, setSyncStatus] = useState('offline'); // 'offline' | 'loading' | 'synced' | 'saving' | 'error'
       const isDataLoadedRef = useRef(false);
-
-      useEffect(() => {
-        userRef.current = user;
-      }, [user]);
-
-      useEffect(() => {
-        isDataLoadedRef.current = isDataLoaded;
-      }, [isDataLoaded]);
+      const isLocalChangeRef = useRef(false);
 
       const [darkMode, setDarkMode] = useState(false);
       const [activeTab, setActiveTab] = useState('matrix');
@@ -191,7 +184,7 @@
 
       const [members, setMembers] = useState(INITIAL_MEMBERS);
       const [requiredWorkDays, setRequiredWorkDays] = useState(20);
-      const [staffFilter, setStaffFilter] = useState(''); // スタッフ絞り込み用
+      const [staffFilter, setStaffFilter] = useState('');
 
       const [allMonthlyData, setAllMonthlyData] = useState({});
 
@@ -225,49 +218,88 @@
           .then(data => setHolidays(data))
           .catch(err => console.error("Holidays fetch error:", err));
       }, []);
-      // ------------------------
 
-      // --- Firebase連携用のデータ更新関数 ---
+      // --- Firebase リアルタイム同期 (onSnapshot) ---
+      useEffect(() => {
+        let unsubscribeSnapshot = null;
+
+        const unsubscribeAuth = auth.onAuthStateChanged((currentUser) => {
+          setUser(currentUser);
+          if (unsubscribeSnapshot) {
+            unsubscribeSnapshot();
+            unsubscribeSnapshot = null;
+          }
+
+          if (currentUser) {
+            setSyncStatus('loading');
+            const docRef = db.collection("users").doc(currentUser.uid);
+            
+            // リアルタイム監視を開始
+            unsubscribeSnapshot = docRef.onSnapshot((docSnap) => {
+              // 自分が今書き込んだ直後のエコーバックは無視してチラつき防止
+              if (isLocalChangeRef.current) {
+                isLocalChangeRef.current = false;
+                setSyncStatus('synced');
+                return;
+              }
+
+              if (docSnap.exists) {
+                const data = docSnap.data();
+                if (data.members) setMembers(data.members);
+                if (data.allMonthlyData) setAllMonthlyData(data.allMonthlyData);
+                if (data.requiredWorkDays) setRequiredWorkDays(data.requiredWorkDays);
+              }
+              isDataLoadedRef.current = true;
+              setSyncStatus('synced');
+            }, (error) => {
+              console.error("Firestore同期エラー:", error);
+              isDataLoadedRef.current = true;
+              setSyncStatus('error');
+            });
+          } else {
+            isDataLoadedRef.current = true;
+            setSyncStatus('offline');
+          }
+        });
+
+        return () => {
+          unsubscribeAuth();
+          if (unsubscribeSnapshot) unsubscribeSnapshot();
+        };
+      }, []);
+
+      // --- データ保存用ラッパー関数（手動変更時のみ確実に保存） ---
+      const saveToFirebase = (dataToMerge) => {
+        if (auth.currentUser && isDataLoadedRef.current) {
+          isLocalChangeRef.current = true;
+          setSyncStatus('saving');
+          db.collection("users").doc(auth.currentUser.uid).set(dataToMerge, { merge: true })
+            .then(() => setSyncStatus('synced'))
+            .catch((err) => {
+              console.error("保存エラー:", err);
+              setSyncStatus('error');
+            });
+        }
+      };
+
       const updateMembers = (newMembers) => {
         setMembers(newMembers);
-        if (userRef.current && isDataLoadedRef.current) {
-          db.collection("users").doc(userRef.current.uid).set({ members: newMembers }, { merge: true });
-        }
+        saveToFirebase({ members: newMembers });
+      };
+
+      const updateRequiredWorkDays = (days) => {
+        setRequiredWorkDays(days);
+        saveToFirebase({ requiredWorkDays: days });
       };
 
       const updateAllMonthlyData = (updaterOrValue) => {
         setAllMonthlyData((prev) => {
           const nextData = typeof updaterOrValue === 'function' ? updaterOrValue(prev) : updaterOrValue;
-          if (userRef.current && isDataLoadedRef.current) {
-            db.collection("users").doc(userRef.current.uid).set({ allMonthlyData: nextData }, { merge: true });
-          }
+          saveToFirebase({ allMonthlyData: nextData });
           return nextData;
         });
       };
-      // ------------------------------------
-
-      // --- Firebaseのログイン監視とデータ取得 ---
-      useEffect(() => {
-        const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
-          setUser(currentUser);
-          if (currentUser) {
-            try {
-              const docRef = db.collection("users").doc(currentUser.uid);
-              const docSnap = await docRef.get();
-              if (docSnap.exists) {
-                const data = docSnap.data();
-                if (data.members) setMembers(data.members);
-                if (data.allMonthlyData) setAllMonthlyData(data.allMonthlyData);
-              }
-            } catch (error) {
-              console.error("Firestore読み込みエラー:", error);
-            }
-          }
-          setIsDataLoaded(true);
-        });
-        return () => unsubscribe();
-      }, []);
-      // ------------------------------------
+      // -------------------------------------------------------------
 
       const daysInMonth = useMemo(() => {
         return new Date(year, month, 0).getDate();
@@ -308,33 +340,25 @@
         }
       }, [darkMode]);
 
+      // ★重要修正: 過去の月データを勝手に削除する処理を取り除き、未作成の月だけ安全に初期化する
       useEffect(() => {
-        updateAllMonthlyData(prev => {
-          const updated = { ...prev };
+        setAllMonthlyData(prev => {
+          if (prev[currentKey]) return prev; // 既にデータがあれば何もしない（上書き防止）
           
-          if (!updated[currentKey]) {
-            const initShifts = {};
-            const initWishes = {};
-            members.forEach(m => {
-              initShifts[m.id] = {};
-              initWishes[m.id] = {};
-              for (let d = 1; d <= daysInMonth; d++) {
-                initShifts[m.id][d] = 'OFF';
-              }
-            });
-            updated[currentKey] = { shifts: initShifts, wishes: initWishes };
-          }
-
-          const prevDate = new Date(year, month - 2, 1);
-          const prevKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
-          
-          Object.keys(updated).forEach(key => {
-            if (key !== currentKey && key !== prevKey) {
-              delete updated[key];
+          const initShifts = {};
+          const initWishes = {};
+          members.forEach(m => {
+            initShifts[m.id] = {};
+            initWishes[m.id] = {};
+            for (let d = 1; d <= daysInMonth; d++) {
+              initShifts[m.id][d] = 'OFF';
             }
           });
-
-          return updated;
+          
+          return {
+            ...prev,
+            [currentKey]: { shifts: initShifts, wishes: initWishes }
+          };
         });
       }, [year, month, daysInMonth, currentKey, members]);
 
@@ -355,8 +379,9 @@
         updateAllMonthlyData(prev => ({
           ...prev,
           [currentKey]: {
-            ...prev[currentKey],
-            shifts: newShifts
+            ...(prev[currentKey] || {}),
+            shifts: newShifts,
+            wishes: prev[currentKey]?.wishes || {}
           }
         }));
       };
@@ -376,7 +401,8 @@
           return {
             ...prev,
             [currentKey]: {
-              ...prev[currentKey],
+              ...(prev[currentKey] || {}),
+              shifts: prev[currentKey]?.shifts || {},
               wishes: {
                 ...currentMonthWish,
                 [memberId]: newMemberWishes
@@ -574,7 +600,8 @@
             return {
               ...prev,
               [currentKey]: {
-                ...prev[currentKey],
+                ...(prev[currentKey] || {}),
+                shifts: prev[currentKey]?.shifts || {},
                 wishes: currentMonthWish
               }
             };
@@ -924,13 +951,13 @@
           const earlyCount = dayShifts.filter(s => s === 'EARLY').length;
           const middleCount = dayShifts.filter(s => s === 'MIDDLE').length;
           const lateCount = dayShifts.filter(s => s === 'LATE').length;
-          const totalWorking = dayShifts.filter(s => s && s !== 'OFF').length;
+          const coreWorking = dayShifts.filter(s => s && !['OFF', 'OFFICE', 'TRAINING', 'OTHER_STORE'].includes(s)).length;
 
-          if (totalWorking === 0) {
+          if (coreWorking === 0) {
             list.push({
               type: 'ZERO_STAFF',
               severity: 'danger',
-              message: `【無人警告】${day}日(${dayOfWeek}): 出勤者が0名です`
+              message: `【無人警告】${day}日(${dayOfWeek}): 店舗出勤者が0名です`
             });
           } else if (earlyCount === 0 || lateCount === 0) {
             list.push({
@@ -965,7 +992,7 @@
       };
 
       const exportToCsv = () => {
-        const headers = ['スタッフ名', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '他店舗', '事務局', '休み'];
+        const headers = ['スタッフ名', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '他店舗', '事務局', '社内活動', '休み'];
         const rows = members.map(m => {
           const memberShifts = currentShifts[m.id] || {};
           const daysData = daysList.map(d => SHIFT_TYPES[memberShifts[d.day]]?.label || '休み');
@@ -975,8 +1002,9 @@
           const lateCount = Object.values(memberShifts).filter(s => s === 'LATE').length;
           const otherStoreCount = Object.values(memberShifts).filter(s => s === 'OTHER_STORE').length;
           const officeCount = Object.values(memberShifts).filter(s => s === 'OFFICE').length;
+          const trainingCount = Object.values(memberShifts).filter(s => s === 'TRAINING').length;
           const offCount = Object.values(memberShifts).filter(s => s === 'OFF').length;
-          return [m.name, ...daysData, workCount, earlyCount, middleCount, lateCount, otherStoreCount, officeCount, offCount];
+          return [m.name, ...daysData, workCount, earlyCount, middleCount, lateCount, otherStoreCount, officeCount, trainingCount, offCount];
         });
 
         const csvContent = '\uFEFF' + [headers, ...rows].map(e => e.map(cell => `"${cell}"`).join(',')).join('\n');
@@ -1075,20 +1103,13 @@ ${JSON.stringify(summaryData, null, 2)}
         updateMembers(newMembers);
       };
 
-      const handleSaveApiKey = (key) => {
-        setUserApiKey(key);
-        localStorage.setItem('shift_gemini_api_key', key);
-        showToast('APIキーをブラウザに保存しました');
-      };
-
-      // 表示用のメンバー（フィルター適用）
       const filteredMembers = members.filter(m => m.name.toLowerCase().includes(staffFilter.toLowerCase()));
 
       return (
         <div className={`min-h-screen font-sans ${darkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}`}>
           
           {/* ヘッダー */}
-          <header className="sticky top-0 z-30 backdrop-blur-md bg-white/95 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 px-4 py-3 shadow-sm">
+          <header className="sticky top-0 z-40 backdrop-blur-md bg-white/95 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 px-4 py-3 shadow-sm">
             <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
               
               <div className="flex items-center space-x-3">
@@ -1138,16 +1159,25 @@ ${JSON.stringify(summaryData, null, 2)}
               {/* ボタン操作 */}
               <div className="flex items-center space-x-2">
 
-                {/* --- ログイン / ログアウトボタン --- */}
+                {/* --- クラウド同期ステータス ＆ ログインボタン --- */}
                 {user ? (
-                  <div className="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700">
-                    <img src={user.photoURL} alt="User" className="w-5 h-5 rounded-full" />
-                    <button onClick={() => auth.signOut()} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
+                  <div className="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <div className="flex items-center space-x-1">
+                      <Cloud className={`w-3.5 h-3.5 ${
+                        syncStatus === 'synced' ? 'text-emerald-500' :
+                        syncStatus === 'saving' || syncStatus === 'loading' ? 'text-amber-500 animate-pulse' : 'text-rose-500'
+                      }`} />
+                      <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 hidden sm:inline">
+                        {syncStatus === 'synced' ? '同期済' : syncStatus === 'saving' ? '保存中...' : syncStatus === 'loading' ? '読込中...' : 'エラー'}
+                      </span>
+                    </div>
+                    <img src={user.photoURL} alt="User" className="w-5 h-5 rounded-full border border-slate-300" />
+                    <button onClick={() => auth.signOut()} className="text-[10px] font-bold text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors">
                       ログアウト
                     </button>
                   </div>
                 ) : (
-                  <button onClick={() => auth.signInWithPopup(googleProvider)} className="flex items-center space-x-1.5 bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-xl font-bold text-xs shadow-sm transition-all">
+                  <button onClick={() => auth.signInWithPopup(googleProvider)} className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-xl font-bold text-xs shadow-sm transition-all">
                     <UserCheck className="w-4 h-4" />
                     <span>ログインして同期</span>
                   </button>
@@ -1183,7 +1213,7 @@ ${JSON.stringify(summaryData, null, 2)}
           </header>
 
           {/* タブナビゲーション */}
-          <nav className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sticky top-[57px] z-20 shadow-sm">
+          <nav className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sticky top-[57px] z-30 shadow-sm">
             <div className="max-w-7xl mx-auto flex space-x-1 overflow-x-auto scrollbar-none py-1.5">
               <button
                 onClick={() => setActiveTab('matrix')}
@@ -1260,13 +1290,14 @@ ${JSON.stringify(summaryData, null, 2)}
                 
                 {/* 凡例 ＆ 条件ルールカード */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <div className="md:col-span-3 bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-center space-y-2">
+                  <div className="md:col-span-3 bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-center space-y-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-1.5 text-xs">
                         <span className="font-bold text-slate-500 dark:text-slate-400 mr-1 text-[11px]">区分:</span>
                         {Object.values(SHIFT_TYPES).map(st => (
                           <div key={st.id} className={`px-2 py-0.5 rounded-lg border text-xs font-semibold ${st.bg} ${st.text} ${st.border} flex items-center space-x-1`}>
                             <span className="font-extrabold">{st.short}</span>
+                            <span className="text-[10px] opacity-80">({st.label})</span>
                           </div>
                         ))}
                       </div>
@@ -1281,23 +1312,28 @@ ${JSON.stringify(summaryData, null, 2)}
                           onChange={(e) => setStaffFilter(e.target.value)}
                           className="bg-transparent text-xs outline-none w-28 placeholder:text-slate-400 text-slate-700 dark:text-slate-200"
                         />
+                        {staffFilter && (
+                          <button onClick={() => setStaffFilter('')} className="text-slate-400 hover:text-slate-600 ml-1">
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
                     </div>
                     
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="flex items-center space-x-2 text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700/60 hidden sm:flex">
-                        <Info className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                        <span>6連勤禁止｜早い出勤回避｜「早1中1遅1」優先</span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-700/60">
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
+                        <span className="text-slate-400">希望表示の見方:</span>
+                        <span className="px-2 py-0.5 rounded bg-indigo-600 text-white shadow-sm">★早希望 (希望通り)</span>
+                        <span className="px-2 py-0.5 rounded bg-rose-600 text-white shadow-sm">!休希望 (希望と不一致)</span>
                       </div>
                       
                       <button
                         onClick={() => setViewScale(v => v === 'normal' ? 'compact' : 'normal')}
-                        className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors shadow-sm ${
+                        className={`flex items-center space-x-1.5 px-3 py-1 rounded-xl border text-xs font-bold transition-colors shadow-sm ${
                           viewScale === 'compact'
                             ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300'
                             : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
                         }`}
-                        title="シフト表の表示倍率を切り替えます"
                       >
                         {viewScale === 'compact' ? <ZoomIn className="w-3.5 h-3.5" /> : <ZoomOut className="w-3.5 h-3.5" />}
                         <span>{viewScale === 'compact' ? '通常倍率に戻す' : '全体を一覧 (縮小)'}</span>
@@ -1319,27 +1355,28 @@ ${JSON.stringify(summaryData, null, 2)}
 
                 {/* シフト表テーブル */}
                 <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md overflow-hidden">
-                  <div className="overflow-x-auto" style={{ zoom: viewScale === 'compact' ? 0.75 : 1 }}>
+                  <div className="overflow-x-auto relative" style={{ zoom: viewScale === 'compact' ? 0.78 : 1 }}>
                     <table className="w-full border-collapse text-xs text-left">
                       <thead>
-                        <tr className="bg-slate-100/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700">
-                          <th className="sticky left-0 z-10 bg-slate-100 dark:bg-slate-900 p-2.5 font-extrabold text-slate-700 dark:text-slate-200 min-w-[110px] shadow-sm">
+                        <tr className="bg-slate-100 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+                          {/* ★貫通防止のため z-30 と右ボーダー・影を設定 */}
+                          <th className="sticky left-0 z-30 bg-slate-100 dark:bg-slate-900 p-2.5 font-extrabold text-slate-700 dark:text-slate-200 min-w-[120px] border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                             スタッフ名
                           </th>
                           {daysList.map(d => (
                             <th
                               key={d.day}
-                              className={`p-1 text-center min-w-[40px] font-bold border-l border-slate-200/60 dark:border-slate-700/60 ${
+                              className={`p-1 text-center min-w-[44px] font-bold border-l border-slate-200/60 dark:border-slate-700/60 ${
                                 d.isDayOff
-                                  ? 'bg-rose-50/70 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400'
+                                  ? 'bg-rose-50/80 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400'
                                   : d.isSaturday
-                                  ? 'bg-sky-50/70 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400'
+                                  ? 'bg-sky-50/80 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400'
                                   : 'text-slate-600 dark:text-slate-300'
                               }`}
                               title={d.isHoliday ? '祝日' : ''}
                             >
-                              <div className="text-[11px] leading-tight">{d.day}</div>
-                              <div className="text-[9px] font-normal leading-tight">{d.dayOfWeek}</div>
+                              <div className="text-xs leading-tight font-extrabold">{d.day}</div>
+                              <div className="text-[10px] font-bold leading-tight">{d.dayOfWeek}</div>
                             </th>
                           ))}
                           <th className="p-2 text-center font-extrabold text-slate-700 dark:text-slate-200 min-w-[60px] bg-slate-200/50 dark:bg-slate-800/80 border-l border-slate-300 dark:border-slate-700">
@@ -1355,14 +1392,16 @@ ${JSON.stringify(summaryData, null, 2)}
                           const isMatchRequired = actualWorkDays === requiredWorkDays;
 
                           return (
-                            <tr key={m.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/40 transition-colors">
-                              <td className="sticky left-0 z-10 bg-white dark:bg-slate-800 p-2.5 font-bold text-slate-800 dark:text-slate-100 truncate max-w-[120px] shadow-sm">
+                            <tr key={m.id} className="group hover:bg-slate-50/80 dark:hover:bg-slate-700/30 transition-colors">
+                              {/* ★貫通防止のため z-20 と不透明背景、右ボーダー・影を徹底 */}
+                              <td className="sticky left-0 z-20 bg-white dark:bg-slate-800 group-hover:bg-slate-50 dark:group-hover:bg-slate-800 p-2.5 font-extrabold text-slate-800 dark:text-slate-100 truncate max-w-[130px] border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                                 {m.name}
                               </td>
                               {daysList.map(d => {
                                 const shiftId = memberShifts[d.day] || 'OFF';
                                 const shift = SHIFT_TYPES[shiftId] || SHIFT_TYPES.OFF;
                                 const wish = memberWishes[d.day];
+                                const isWishMatched = wish && wish.type === shiftId;
 
                                 const cellWarnings = warnings.filter(w => w.memberId === m.id && w.day === d.day);
                                 const hasDanger = cellWarnings.some(w => w.severity === 'danger');
@@ -1370,26 +1409,34 @@ ${JSON.stringify(summaryData, null, 2)}
                                 
                                 let alertClass = "";
                                 if (hasDanger) {
-                                  alertClass = "ring-2 ring-rose-500 ring-offset-1 bg-rose-50 dark:bg-rose-900/40 animate-pulse";
+                                  alertClass = "ring-2 ring-rose-500 bg-rose-50 dark:bg-rose-900/40 animate-pulse";
                                 } else if (hasWarning) {
-                                  alertClass = "ring-2 ring-orange-400 ring-offset-1 bg-orange-50 dark:bg-orange-900/40 animate-pulse";
+                                  alertClass = "ring-2 ring-orange-400 bg-orange-50 dark:bg-orange-900/40 animate-pulse";
                                 }
 
                                 return (
                                   <td
                                     key={d.day}
                                     onClick={() => setSelectedCell({ memberId: m.id, memberName: m.name, day: d.day, dayOfWeek: d.dayOfWeek, currentShift: shiftId })}
-                                    className="p-1 text-center border-l border-slate-100 dark:border-slate-700/40 cursor-pointer hover:opacity-80 transition-opacity align-top"
+                                    className={`p-1 text-center border-l border-slate-100 dark:border-slate-700/40 cursor-pointer hover:bg-slate-100/70 dark:hover:bg-slate-700/50 transition-colors align-middle ${
+                                      d.isDayOff ? 'bg-rose-50/20 dark:bg-rose-950/10' : d.isSaturday ? 'bg-sky-50/20 dark:bg-sky-950/10' : ''
+                                    }`}
                                   >
-                                    <div className="relative pt-3 pb-0.5">
-                                      {/* 希望休のバッジ表示 */}
-                                      {wish && (
-                                        <span className="absolute top-0 left-1/2 -translate-x-1/2 text-[9px] font-black text-orange-600 dark:text-orange-300 bg-orange-100 dark:bg-orange-900/80 border border-orange-300 dark:border-orange-700 px-1 rounded-sm shadow-sm whitespace-nowrap z-10 leading-none">
-                                          {wish.type === 'OFF' ? '休' : SHIFT_TYPES[wish.type].short}希望
-                                        </span>
+                                    {/* ★視認性を大幅改善した2段構えレイアウト（z-indexを使わず貫通を根本防止） */}
+                                    <div className="flex flex-col items-center justify-center space-y-0.5 min-h-[42px]">
+                                      {wish ? (
+                                        <div className={`w-full text-[10px] font-extrabold px-1 py-0.5 rounded leading-none tracking-tighter shadow-sm whitespace-nowrap ${
+                                          isWishMatched
+                                            ? 'bg-indigo-600 text-white dark:bg-indigo-500'
+                                            : 'bg-rose-600 text-white animate-bounce'
+                                        }`}>
+                                          {isWishMatched ? '★' : '!'}{wish.type === 'OFF' ? '休' : SHIFT_TYPES[wish.type]?.short}希望
+                                        </div>
+                                      ) : (
+                                        <div className="h-[14px]" /> /* 希望がない日も高さを揃えてガタつきを防止 */
                                       )}
                                       
-                                      <div className={`py-1.5 rounded-md text-xs font-bold border ${shift.bg} ${shift.text} ${shift.border} shadow-sm ${alertClass}`}>
+                                      <div className={`w-full py-1 rounded-md text-xs font-extrabold border ${shift.bg} ${shift.text} ${shift.border} shadow-sm ${alertClass}`}>
                                         {shift.short}
                                       </div>
                                     </div>
@@ -1397,10 +1444,10 @@ ${JSON.stringify(summaryData, null, 2)}
                                 );
                               })}
                               <td className="p-2 text-center font-black bg-slate-50/50 dark:bg-slate-800/40 border-l border-slate-200 dark:border-slate-700 align-middle">
-                                <span className={`inline-block px-1.5 py-0.5 rounded-md ${
+                                <span className={`inline-block px-2 py-1 rounded-md text-xs ${
                                   isMatchRequired 
-                                    ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50' 
-                                    : 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 font-black animate-pulse'
+                                    ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-100/80 dark:bg-emerald-950/60' 
+                                    : 'text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-950/60 font-black animate-pulse'
                                 }`}>
                                   {actualWorkDays}
                                 </span>
@@ -1410,19 +1457,15 @@ ${JSON.stringify(summaryData, null, 2)}
                         })}
 
                         {/* 日別出勤合計 */}
-                        <tr className="bg-slate-100/90 dark:bg-slate-900/90 border-t-2 border-slate-300 dark:border-slate-700 font-bold text-[11px]">
-                          <td className="sticky left-0 z-10 bg-slate-100 dark:bg-slate-900 p-2 text-slate-700 dark:text-slate-300 shadow-sm align-middle">
+                        <tr className="bg-slate-100 dark:bg-slate-900 border-t-2 border-slate-300 dark:border-slate-700 font-bold text-[11px]">
+                          <td className="sticky left-0 z-20 bg-slate-100 dark:bg-slate-900 p-2.5 text-slate-700 dark:text-slate-300 border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] align-middle">
                             出勤合計
                           </td>
                           {daysList.map(d => {
-                            // フィルター状態に関わらず、全員の合計を計算
                             const dayShifts = members.map(m => currentShifts[m.id]?.[d.day]);
-                            
-                            // 通常出勤のカウント（OFF, OFFICE, TRAINING, OTHER_STORE以外）
                             const coreShifts = dayShifts.filter(s => s && !['OFF', 'OFFICE', 'TRAINING', 'OTHER_STORE'].includes(s));
                             const coreCount = coreShifts.length;
                             
-                            // 他業務のカウント
                             const otherShifts = dayShifts.filter(s => s && ['OFFICE', 'TRAINING', 'OTHER_STORE'].includes(s));
                             const otherCount = otherShifts.length;
 
@@ -1432,12 +1475,14 @@ ${JSON.stringify(summaryData, null, 2)}
                               <td
                                 key={d.day}
                                 className={`p-1 text-center border-l border-slate-200 dark:border-slate-700 align-middle ${
-                                  isShortage ? 'bg-rose-100/60 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300' : 'text-slate-700 dark:text-slate-300'
+                                  isShortage ? 'bg-rose-100/80 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300' : 'text-slate-700 dark:text-slate-300'
                                 }`}
                               >
-                                <div className="font-black text-[11px] leading-tight">{coreCount}名</div>
+                                <div className="font-black text-xs leading-tight">{coreCount}名</div>
                                 {otherCount > 0 && (
-                                  <div className="text-[9px] font-normal text-slate-500 dark:text-slate-400 leading-none mt-0.5">他:{otherCount}</div>
+                                  <div className="text-[10px] font-bold text-teal-700 dark:text-teal-400 bg-teal-100/60 dark:bg-teal-950/50 rounded px-0.5 mt-0.5 leading-tight">
+                                    他:{otherCount}
+                                  </div>
                                 )}
                               </td>
                             );
@@ -1522,7 +1567,7 @@ ${JSON.stringify(summaryData, null, 2)}
                     <input
                       type="number"
                       value={requiredWorkDays}
-                      onChange={(e) => setRequiredWorkDays(Number(e.target.value))}
+                      onChange={(e) => updateRequiredWorkDays(Number(e.target.value))}
                       min={1}
                       max={daysInMonth}
                       className="w-16 p-1.5 text-center font-black text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -1607,7 +1652,7 @@ ${JSON.stringify(summaryData, null, 2)}
                             isSelected 
                               ? 'ring-2 ring-emerald-600 ring-offset-2 dark:ring-offset-slate-800 shadow-md scale-105' 
                               : 'opacity-70 hover:opacity-100'
-                          } ${palette.bg}`}
+                          } ${palette.bg} ${palette.text} ${palette.border}`}
                         >
                           <span className="w-2 h-2 rounded-full bg-current" />
                           <span>{palette.label}</span>
@@ -1631,7 +1676,7 @@ ${JSON.stringify(summaryData, null, 2)}
                       <div key={m.id} className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-3">
                         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-2">
                           <span className="font-extrabold text-sm text-slate-800 dark:text-slate-100">{m.name}</span>
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
                             希望指定: {wishCount}件
                           </span>
                         </div>
@@ -1649,7 +1694,7 @@ ${JSON.stringify(summaryData, null, 2)}
 
                           <div className="grid grid-cols-7 gap-1 pt-1">
                             {Array.from({ length: firstDayOffset }).map((_, idx) => (
-                              <div key={`blank-${idx}`} className="h-10 bg-slate-50/40 dark:bg-slate-900/20 rounded-lg border border-transparent" />
+                              <div key={`blank-${idx}`} className="h-12 bg-slate-50/40 dark:bg-slate-900/20 rounded-lg border border-transparent" />
                             ))}
 
                             {daysList.map(d => {
@@ -1664,9 +1709,9 @@ ${JSON.stringify(summaryData, null, 2)}
                                   onPointerLeave={handlePointerCancelForWish}
                                   onPointerCancel={handlePointerCancelForWish}
                                   onContextMenu={preventContextMenu}
-                                  className={`h-11 p-1 rounded-lg text-center cursor-pointer border transition-all hover:scale-105 flex flex-col justify-between select-none touch-manipulation ${
+                                  className={`h-12 p-1 rounded-lg text-center cursor-pointer border transition-all hover:scale-105 flex flex-col justify-between select-none touch-manipulation ${
                                     shift
-                                      ? `${shift.bg} ${shift.text} ${shift.border} font-black ring-1 ring-emerald-500 shadow-sm`
+                                      ? `${shift.bg} ${shift.text} ${shift.border} font-black ring-2 ring-indigo-500 shadow-sm`
                                       : d.isDayOff
                                       ? 'bg-rose-50/50 dark:bg-rose-950/20 border-rose-100 dark:border-rose-900/30 text-rose-700 dark:text-rose-300'
                                       : d.isSaturday
@@ -1677,7 +1722,7 @@ ${JSON.stringify(summaryData, null, 2)}
                                 >
                                   <div className="text-[10px] font-bold text-left leading-none opacity-80 pointer-events-none">{d.day}</div>
                                   <div className="text-xs font-black text-center leading-none pb-0.5 pointer-events-none">
-                                    {shift ? shift.short : '-'}
+                                    {shift ? `${shift.short}希望` : '-'}
                                   </div>
                                 </div>
                               );
@@ -1810,7 +1855,7 @@ ${JSON.stringify(summaryData, null, 2)}
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
                   <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
                     <Settings className="w-5 h-5 text-emerald-600" />
-                    <span>スタッフ管理</span>
+                    <span>スタッフ管理（並び替え・追加・削除）</span>
                   </h2>
 
                   <div className="flex items-center space-x-2 pt-2">
@@ -1853,7 +1898,6 @@ ${JSON.stringify(summaryData, null, 2)}
                         )}
 
                         <div className="flex items-center space-x-1">
-                          {/* 入れ替えボタン */}
                           <div className="flex items-center mr-3 border-r border-slate-300 dark:border-slate-600 pr-3">
                             <button
                               onClick={() => moveMember(idx, -1)}
@@ -1995,4 +2039,3 @@ ${JSON.stringify(summaryData, null, 2)}
   </script>
 </body>
 </html>
-
