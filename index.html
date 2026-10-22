@@ -31,6 +31,11 @@
   <!-- Babel Standalone for in-browser JSX compilation -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+  <!-- Firebase SDK (互換バージョン) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
   <style>
     .scrollbar-none::-webkit-scrollbar {
       display: none;
@@ -50,6 +55,25 @@
 
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
+
+    // --- Firebase 初期化設定 ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyBy2w-PIkIAcUNJvFuJnteKtck_3gaJo64",
+      authDomain: "shiftcraft-d637d.firebaseapp.com",
+      projectId: "shiftcraft-d637d",
+      storageBucket: "shiftcraft-d637d.firebasestorage.app",
+      messagingSenderId: "1059294596540",
+      appId: "1:1059294596540:web:d3db2347a70db3f79eafb9",
+      measurementId: "G-41HCK7W92P"
+    };
+
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+    const googleProvider = new firebase.auth.GoogleAuthProvider();
+    // ----------------------------
 
     // 高速・安全なインラインSVGアイコン群
     const IconBase = ({ d, className = "w-4 h-4", strokeWidth = 2, fill = "none" }) => (
@@ -135,10 +159,24 @@
     };
 
     function App() {
+      // ログイン状態とデータ復元の管理
+      const [user, setUser] = useState(null);
+      const [isDataLoaded, setIsDataLoaded] = useState(false);
+      const userRef = useRef(null);
+      const isDataLoadedRef = useRef(false);
+
+      useEffect(() => {
+        userRef.current = user;
+      }, [user]);
+
+      useEffect(() => {
+        isDataLoadedRef.current = isDataLoaded;
+      }, [isDataLoaded]);
+
       const [darkMode, setDarkMode] = useState(false);
       const [activeTab, setActiveTab] = useState('matrix');
       const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('shift_gemini_api_key') || '');
-      const [viewScale, setViewScale] = useState('normal'); // 'normal' | 'compact'
+      const [viewScale, setViewScale] = useState('normal');
       
       const today = new Date();
       const nextMonthDate = new Date(today.getFullYear(), today.getMonth() + 1, 1);
@@ -161,7 +199,6 @@
       const [aiAnalysisResult, setAiAnalysisResult] = useState('');
       const [toastMessage, setToastMessage] = useState(null);
 
-      // 希望入力用の選択パレット（デフォルトは「休み」）
       const [selectedWishPalette, setSelectedWishPalette] = useState('OFF');
       const [textWishInput, setTextWishInput] = useState('');
       const [isParsingWish, setIsParsingWish] = useState(false);
@@ -171,10 +208,51 @@
       const [editingMemberId, setEditingMemberId] = useState(null);
       const [editingMemberName, setEditingMemberName] = useState('');
 
-      // 希望シフトの長押し直接入力用の状態・タイマー
       const [wishModalParams, setWishModalParams] = useState(null);
       const pressTimer = useRef(null);
       const isLongPress = useRef(false);
+
+      // --- Firebase連携用のデータ更新関数 ---
+      const updateMembers = (newMembers) => {
+        setMembers(newMembers);
+        if (userRef.current && isDataLoadedRef.current) {
+          db.collection("users").doc(userRef.current.uid).set({ members: newMembers }, { merge: true });
+        }
+      };
+
+      const updateAllMonthlyData = (updaterOrValue) => {
+        setAllMonthlyData((prev) => {
+          const nextData = typeof updaterOrValue === 'function' ? updaterOrValue(prev) : updaterOrValue;
+          if (userRef.current && isDataLoadedRef.current) {
+            db.collection("users").doc(userRef.current.uid).set({ allMonthlyData: nextData }, { merge: true });
+          }
+          return nextData;
+        });
+      };
+      // ------------------------------------
+
+      // --- Firebaseのログイン監視とデータ取得 ---
+      useEffect(() => {
+        const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
+          setUser(currentUser);
+          if (currentUser) {
+            try {
+              const docRef = db.collection("users").doc(currentUser.uid);
+              const docSnap = await docRef.get();
+              if (docSnap.exists) {
+                const data = docSnap.data();
+                if (data.members) setMembers(data.members);
+                if (data.allMonthlyData) setAllMonthlyData(data.allMonthlyData);
+              }
+            } catch (error) {
+              console.error("Firestore読み込みエラー:", error);
+            }
+          }
+          setIsDataLoaded(true);
+        });
+        return () => unsubscribe();
+      }, []);
+      // ------------------------------------
 
       const daysInMonth = useMemo(() => {
         return new Date(year, month, 0).getDate();
@@ -211,7 +289,7 @@
       }, [darkMode]);
 
       useEffect(() => {
-        setAllMonthlyData(prev => {
+        updateAllMonthlyData(prev => {
           const updated = { ...prev };
           
           if (!updated[currentKey]) {
@@ -254,7 +332,7 @@
       };
 
       const setShiftsForCurrentMonth = (newShifts) => {
-        setAllMonthlyData(prev => ({
+        updateAllMonthlyData(prev => ({
           ...prev,
           [currentKey]: {
             ...prev[currentKey],
@@ -263,18 +341,15 @@
         }));
       };
 
-      // 希望シフトのトグル登録（同じ区分なら解除、未設定なら登録）
       const setWishForMember = (memberId, day, wishType) => {
-        setAllMonthlyData(prev => {
+        updateAllMonthlyData(prev => {
           const currentMonthWish = prev[currentKey]?.wishes || {};
           const memberWishes = currentMonthWish[memberId] || {};
           const newMemberWishes = { ...memberWishes };
           
           if (memberWishes[day]?.type === wishType || wishType === null) {
-            // トグル：既に同じ区分が設定されていれば削除
             delete newMemberWishes[day];
           } else {
-            // 新規設定または上書き
             newMemberWishes[day] = { type: wishType };
           }
 
@@ -295,9 +370,7 @@
         setWishForMember(memberId, day, selectedWishPalette);
       };
 
-      // タッチ・マウス長押し関連のイベントハンドラ
       const handlePointerDownForWish = (memberId, day, e) => {
-        // 左クリック or タッチのみ処理
         if (e.button !== 0 && e.pointerType === 'mouse') return;
         
         isLongPress.current = false;
@@ -305,9 +378,8 @@
           isLongPress.current = true;
           const memberName = members.find(m => m.id === memberId)?.name || '';
           setWishModalParams({ memberId, day, memberName });
-          // スマホ向け: 長押し検知時に軽くバイブレーション
           if (navigator.vibrate) navigator.vibrate(50);
-        }, 400); // 400ms長押しで発火
+        }, 400);
       };
 
       const handlePointerUpForWish = (memberId, day, e) => {
@@ -315,7 +387,6 @@
           clearTimeout(pressTimer.current);
           pressTimer.current = null;
         }
-        // 長押し判定されていなければ通常のワンタップ処理を実行
         if (!isLongPress.current) {
           handleDateCellClickForWish(memberId, day);
         }
@@ -331,7 +402,7 @@
       };
 
       const preventContextMenu = (e) => {
-        e.preventDefault(); // スマホ等の長押しメニューを防止
+        e.preventDefault();
       };
 
       const getPrevMonthLastDaysShifts = () => {
@@ -384,17 +455,14 @@
         return prevWork + 1 + nextWork;
       };
 
-      // 前日より早い出勤（遅→早, 遅→中, 中→早）を判定するロジック
       const isShiftEarlierThan = (prevShift, nextShift) => {
         if (!prevShift || prevShift === 'OFF' || !nextShift || nextShift === 'OFF') return false;
-        const rank = { EARLY: 1, MIDDLE: 2, LATE: 3 }; // 数字が大きいほど遅い時間帯
+        const rank = { EARLY: 1, MIDDLE: 2, LATE: 3 };
         const prevRank = rank[prevShift] || 0;
         const nextRank = rank[nextShift] || 0;
-        // 前日が設定されており、かつ当日の方が時間が早い(rankが小さい)場合はtrue
         return prevRank > 0 && nextRank > 0 && prevRank > nextRank;
       };
 
-      // 自動生成で前日より早い出勤を双方向にブロック
       const isReverseShiftBidirectional = (memberId, day, newShiftType, shiftsMap, prevMonthInfo) => {
         if (!newShiftType || newShiftType === 'OFF') return false;
 
@@ -468,7 +536,7 @@
           }
 
           let appliedCount = 0;
-          setAllMonthlyData(prev => {
+          updateAllMonthlyData(prev => {
             const currentMonthWish = { ...(prev[currentKey]?.wishes || {}) };
 
             wishesList.forEach(item => {
@@ -589,7 +657,6 @@
             const candidates = pool.filter(m => {
               const cons = getExactConsecutiveWorkDays(m.id, day, shiftType, newShifts, prevMonthInfo);
               if (cons > maxConsecutiveAllowed) return false;
-              // 逆シフト（前日より早い出勤）の回避
               if (isReverseShiftBidirectional(m.id, day, shiftType, newShifts, prevMonthInfo)) return false;
               return true;
             });
@@ -630,28 +697,25 @@
             }
           });
 
-          // 出勤日数の完全一致処理
           members.forEach(m => {
             let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
 
             while (currentWorkCount < requiredWorkDays) {
               let validDays = [];
-
               for (let d = 1; d <= daysInMonth; d++) {
                 if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
                   const cons = getExactConsecutiveWorkDays(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
                   const isRev = isReverseShiftBidirectional(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
-
                   if (!isRev && cons <= 5) {
-              const totalWorkingToday = members.filter(mem => newShifts[mem.id][d] && newShifts[mem.id][d] !== 'OFF').length;
-              validDays.push({ day: d, totalWorkingToday, cons });
-            }
-          }
-        }
+                    const totalWorkingToday = members.filter(mem => newShifts[mem.id][d] && newShifts[mem.id][d] !== 'OFF').length;
+                    validDays.push({ day: d, totalWorkingToday, cons });
+                  }
+                }
+              }
 
-        if (validDays.length === 0) break;
+              if (validDays.length === 0) break;
 
-        validDays.sort((a, b) => {
+              validDays.sort((a, b) => {
                 const aConsOk = a.cons <= 4 ? 1 : 0;
                 const bConsOk = b.cons <= 4 ? 1 : 0;
                 if (aConsOk !== bConsOk) return bConsOk - aConsOk;
@@ -666,66 +730,63 @@
           });
 
           members.forEach(m => {
-        let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
+            let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
 
-        while (currentWorkCount < requiredWorkDays) {
-          let openDays = [];
-          for (let d = 1; d <= daysInMonth; d++) {
-            if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
-              const cons = getExactConsecutiveWorkDays(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
-              if (cons <= 5) openDays.push({ day: d, cons });
-            }
-          }
-          // 希望のない日で空きが見つからない場合のフォールバック
-          if (openDays.length === 0) {
-            for (let d = 1; d <= daysInMonth; d++) {
-              if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
-                openDays.push({ day: d, cons: 99 });
+            while (currentWorkCount < requiredWorkDays) {
+              let openDays = [];
+              for (let d = 1; d <= daysInMonth; d++) {
+                if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
+                  const cons = getExactConsecutiveWorkDays(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
+                  if (cons <= 5) openDays.push({ day: d, cons });
+                }
               }
-            }
-          }
-          // どうしても足りない場合は希望を無視して補填候補にする
-          if (openDays.length === 0) {
-            for (let d = 1; d <= daysInMonth; d++) {
-              if (newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') {
-                openDays.push({ day: d, cons: 999 });
+              if (openDays.length === 0) {
+                for (let d = 1; d <= daysInMonth; d++) {
+                  if ((newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') && !currentWishes[m.id]?.[d]?.type) {
+                    openDays.push({ day: d, cons: 99 });
+                  }
+                }
               }
-            }
-          }
-          if (openDays.length === 0) break;
+              if (openDays.length === 0) {
+                for (let d = 1; d <= daysInMonth; d++) {
+                  if (newShifts[m.id][d] === null || newShifts[m.id][d] === 'OFF') {
+                    openDays.push({ day: d, cons: 999 });
+                  }
+                }
+              }
+              if (openDays.length === 0) break;
 
-          openDays.sort((a, b) => a.cons - b.cons);
-          newShifts[m.id][openDays[0].day] = 'MIDDLE';
-          currentWorkCount++;
-        }
-
-        while (currentWorkCount > requiredWorkDays) {
-          let candidatesForRemove = [];
-          for (let d = 1; d <= daysInMonth; d++) {
-            const shiftType = newShifts[m.id][d];
-            if (shiftType && shiftType !== 'OFF' && !currentWishes[m.id]?.[d]?.type) {
-              const totalWorkingToday = members.filter(mem => newShifts[mem.id][d] && newShifts[mem.id][d] !== 'OFF').length;
-              if (totalWorkingToday > 2) {
-                candidatesForRemove.push({ day: d, totalWorkingToday });
-              }
+              openDays.sort((a, b) => a.cons - b.cons);
+              newShifts[m.id][openDays[0].day] = 'MIDDLE';
+              currentWorkCount++;
             }
-          }
-          // 削れる日がない場合は希望を無視して削る候補を探す
-          if (candidatesForRemove.length === 0) {
-            for (let d = 1; d <= daysInMonth; d++) {
-              const shiftType = newShifts[m.id][d];
-              if (shiftType && shiftType !== 'OFF') {
-                candidatesForRemove.push({ day: d, totalWorkingToday: 99 });
-              }
-            }
-          }
-          if (candidatesForRemove.length === 0) break;
 
-          candidatesForRemove.sort((a, b) => b.totalWorkingToday - a.totalWorkingToday);
-          newShifts[m.id][candidatesForRemove[0].day] = 'OFF';
-          currentWorkCount--;
-        }
-      });
+            while (currentWorkCount > requiredWorkDays) {
+              let candidatesForRemove = [];
+              for (let d = 1; d <= daysInMonth; d++) {
+                const shiftType = newShifts[m.id][d];
+                if (shiftType && shiftType !== 'OFF' && !currentWishes[m.id]?.[d]?.type) {
+                  const totalWorkingToday = members.filter(mem => newShifts[mem.id][d] && newShifts[mem.id][d] !== 'OFF').length;
+                  if (totalWorkingToday > 2) {
+                    candidatesForRemove.push({ day: d, totalWorkingToday });
+                  }
+                }
+              }
+              if (candidatesForRemove.length === 0) {
+                for (let d = 1; d <= daysInMonth; d++) {
+                  const shiftType = newShifts[m.id][d];
+                  if (shiftType && shiftType !== 'OFF') {
+                    candidatesForRemove.push({ day: d, totalWorkingToday: 99 });
+                  }
+                }
+              }
+              if (candidatesForRemove.length === 0) break;
+
+              candidatesForRemove.sort((a, b) => b.totalWorkingToday - a.totalWorkingToday);
+              newShifts[m.id][candidatesForRemove[0].day] = 'OFF';
+              currentWorkCount--;
+            }
+          });
 
           members.forEach(m => {
             for (let d = 1; d <= daysInMonth; d++) {
@@ -733,7 +794,6 @@
             }
           });
 
-          // 早1・中1・遅1の均衡調整
           for (let d = 1; d <= daysInMonth; d++) {
             const dayShifts = members.map(m => ({ id: m.id, shift: newShifts[m.id][d] }));
             const earlyMembers = dayShifts.filter(x => x.shift === 'EARLY');
@@ -763,87 +823,85 @@
       };
 
       const warnings = useMemo(() => {
-    const list = [];
-    const prevMonthInfo = getPrevMonthLastDaysShifts();
+        const list = [];
+        const prevMonthInfo = getPrevMonthLastDaysShifts();
 
-    members.forEach(m => {
-      const memberShifts = currentShifts[m.id] || {};
-      const memberWishes = currentWishes[m.id] || {};
-      const actualDays = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
+        members.forEach(m => {
+          const memberShifts = currentShifts[m.id] || {};
+          const memberWishes = currentWishes[m.id] || {};
+          const actualDays = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
 
-      if (actualDays !== requiredWorkDays) {
-        list.push({
-          type: 'EXACT_DAYS_MISMATCH',
-          severity: 'danger',
-          memberName: m.name,
-          memberId: m.id,
-          message: `【必須日数不一致】${m.name}: 現在 ${actualDays}日出勤 （必須 ${requiredWorkDays}日）`
-        });
-      }
-
-      let consecutiveWork = prevMonthInfo?.[m.id]?.consecutiveWorkAtEnd || 0;
-      for (let d = 1; d <= daysInMonth; d++) {
-        const current = memberShifts[d] || 'OFF';
-        const prev = d > 1 ? memberShifts[d - 1] : prevMonthInfo?.[m.id]?.lastDayShift;
-        const wishType = memberWishes[d]?.type;
-
-        // 希望不一致のアラート
-        if (wishType && current !== wishType) {
-          list.push({
-            type: 'WISH_MISMATCH',
-            severity: 'warning',
-            memberName: m.name,
-            memberId: m.id,
-            day: d,
-            message: `【希望不一致】${m.name}: ${d}日は「${SHIFT_TYPES[wishType]?.label}」希望ですが、「${SHIFT_TYPES[current]?.label || '休み'}」になっています`
-          });
-        }
-
-        if (current && current !== 'OFF') {
-          consecutiveWork++;
-          if (consecutiveWork === 5) {
+          if (actualDays !== requiredWorkDays) {
             list.push({
-              type: 'CONSECUTIVE_5',
-              severity: 'warning',
-              memberName: m.name,
-              memberId: m.id,
-              day: d,
-              message: `【注意: 5連勤】${m.name}: ${d}日時点で 5連勤が発生（4連勤以下推奨）`
-            });
-          } else if (consecutiveWork >= 6) {
-            list.push({
-              type: 'CONSECUTIVE_6',
+              type: 'EXACT_DAYS_MISMATCH',
               severity: 'danger',
               memberName: m.name,
               memberId: m.id,
-              day: d,
-              message: `【禁止違反: 6連勤以上】${m.name}: ${d}日時点で 通算 ${consecutiveWork}連勤`
+              message: `【必須日数不一致】${m.name}: 現在 ${actualDays}日出勤 （必須 ${requiredWorkDays}日）`
             });
           }
-        } else {
-          consecutiveWork = 0;
-        }
 
-        // 前日より早い出勤（中→早、遅→中、遅→早）を検知
-        if (isShiftEarlierThan(prev, current)) {
-          const prevLabel = SHIFT_TYPES[prev]?.label || '勤務';
-          const curLabel = SHIFT_TYPES[current]?.label || '勤務';
-          const prevDayText = d - 1 === 0 ? '前月最終日' : `${d - 1}日`;
-          list.push({
-            type: 'EARLIER_SHIFT',
-            severity: 'danger',
-            memberName: m.name,
-            memberId: m.id,
-            day: d,
-            message: `【前日より早い出勤】${m.name}: ${prevDayText}(${prevLabel}) → ${d}日(${curLabel}) [休息不足注意]`
-          });
-        }
-      }
-    });
+          let consecutiveWork = prevMonthInfo?.[m.id]?.consecutiveWorkAtEnd || 0;
+          for (let d = 1; d <= daysInMonth; d++) {
+            const current = memberShifts[d] || 'OFF';
+            const prev = d > 1 ? memberShifts[d - 1] : prevMonthInfo?.[m.id]?.lastDayShift;
+            const wishType = memberWishes[d]?.type;
 
-    daysList.forEach(({ day, dayOfWeek }) => {
-      const dayShifts = members.map(m => currentShifts[m.id]?.[day]);
-      const earlyCount = dayShifts.filter(s => s === 'EARLY').length;
+            if (wishType && current !== wishType) {
+              list.push({
+                type: 'WISH_MISMATCH',
+                severity: 'warning',
+                memberName: m.name,
+                memberId: m.id,
+                day: d,
+                message: `【希望不一致】${m.name}: ${d}日は「${SHIFT_TYPES[wishType]?.label}」希望ですが、「${SHIFT_TYPES[current]?.label || '休み'}」になっています`
+              });
+            }
+
+            if (current && current !== 'OFF') {
+              consecutiveWork++;
+              if (consecutiveWork === 5) {
+                list.push({
+                  type: 'CONSECUTIVE_5',
+                  severity: 'warning',
+                  memberName: m.name,
+                  memberId: m.id,
+                  day: d,
+                  message: `【注意: 5連勤】${m.name}: ${d}日時点で 5連勤が発生（4連勤以下推奨）`
+                });
+              } else if (consecutiveWork >= 6) {
+                list.push({
+                  type: 'CONSECUTIVE_6',
+                  severity: 'danger',
+                  memberName: m.name,
+                  memberId: m.id,
+                  day: d,
+                  message: `【禁止違反: 6連勤以上】${m.name}: ${d}日時点で 通算 ${consecutiveWork}連勤`
+                });
+              }
+            } else {
+              consecutiveWork = 0;
+            }
+
+            if (isShiftEarlierThan(prev, current)) {
+              const prevLabel = SHIFT_TYPES[prev]?.label || '勤務';
+              const curLabel = SHIFT_TYPES[current]?.label || '勤務';
+              const prevDayText = d - 1 === 0 ? '前月最終日' : `${d - 1}日`;
+              list.push({
+                type: 'EARLIER_SHIFT',
+                severity: 'danger',
+                memberName: m.name,
+                memberId: m.id,
+                day: d,
+                message: `【前日より早い出勤】${m.name}: ${prevDayText}(${prevLabel}) → ${d}日(${curLabel}) [休息不足注意]`
+              });
+            }
+          }
+        });
+
+        daysList.forEach(({ day, dayOfWeek }) => {
+          const dayShifts = members.map(m => currentShifts[m.id]?.[day]);
+          const earlyCount = dayShifts.filter(s => s === 'EARLY').length;
           const middleCount = dayShifts.filter(s => s === 'MIDDLE').length;
           const lateCount = dayShifts.filter(s => s === 'LATE').length;
           const totalWorking = dayShifts.filter(s => s && s !== 'OFF').length;
@@ -965,7 +1023,7 @@ ${JSON.stringify(summaryData, null, 2)}
       const handleAddMember = () => {
         if (!newMemberName.trim()) return;
         const newId = 'm_' + Date.now();
-        setMembers([...members, { id: newId, name: newMemberName.trim() }]);
+        updateMembers([...members, { id: newId, name: newMemberName.trim() }]);
         setNewMemberName('');
         showToast(`${newMemberName.trim()} さんを追加しました`);
       };
@@ -975,13 +1033,13 @@ ${JSON.stringify(summaryData, null, 2)}
           showToast('最低2名のスタッフが必要です');
           return;
         }
-        setMembers(members.filter(m => m.id !== id));
+        updateMembers(members.filter(m => m.id !== id));
         showToast(`${name} を削除しました`);
       };
 
       const handleUpdateMemberName = (id) => {
         if (!editingMemberName.trim()) return;
-        setMembers(members.map(m => m.id === id ? { ...m, name: editingMemberName.trim() } : m));
+        updateMembers(members.map(m => m.id === id ? { ...m, name: editingMemberName.trim() } : m));
         setEditingMemberId(null);
         setEditingMemberName('');
         showToast('スタッフ名を更新しました');
@@ -1046,6 +1104,22 @@ ${JSON.stringify(summaryData, null, 2)}
 
               {/* ボタン操作 */}
               <div className="flex items-center space-x-2">
+
+                {/* --- ログイン / ログアウトボタン --- */}
+                {user ? (
+                  <div className="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-xl border border-slate-200 dark:border-slate-700">
+                    <img src={user.photoURL} alt="User" className="w-5 h-5 rounded-full" />
+                    <button onClick={() => auth.signOut()} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
+                      ログアウト
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => auth.signInWithPopup(googleProvider)} className="flex items-center space-x-1.5 bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-xl font-bold text-xs shadow-sm transition-all">
+                    <UserCheck className="w-4 h-4" />
+                    <span>ログインして同期</span>
+                  </button>
+                )}
+
                 <button
                   onClick={generateAutoShifts}
                   disabled={isGenerating}
@@ -1148,12 +1222,12 @@ ${JSON.stringify(summaryData, null, 2)}
           <main className="max-w-7xl mx-auto p-4 space-y-4">
 
             {/* 1. シフト表 (マトリクス) タブ */}
-        {activeTab === 'matrix' && (
-          <div className="space-y-4">
-            
-            {/* 凡例 ＆ 条件ルールカード */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div className="md:col-span-3 bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-wrap items-center justify-between gap-2">
+            {activeTab === 'matrix' && (
+              <div className="space-y-4">
+                
+                {/* 凡例 ＆ 条件ルールカード */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <div className="md:col-span-3 bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <span className="font-bold text-slate-500 dark:text-slate-400 mr-1 text-[11px]">区分:</span>
                       {Object.values(SHIFT_TYPES).map(st => (
@@ -1191,18 +1265,18 @@ ${JSON.stringify(summaryData, null, 2)}
                       <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">{requiredWorkDays} 日</span>
                     </div>
                     <div className="text-right">
-                  <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">登録人数</span>
-                  <span className="text-xl font-black text-slate-800 dark:text-slate-200">{members.length} 名</span>
+                      <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block">登録人数</span>
+                      <span className="text-xl font-black text-slate-800 dark:text-slate-200">{members.length} 名</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
 
-            {/* シフト表テーブル */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md overflow-hidden">
-              <div className="overflow-x-auto" style={{ zoom: viewScale === 'compact' ? 0.75 : 1 }}>
-                <table className="w-full border-collapse text-xs text-left">
-                  <thead>
-                    <tr className="bg-slate-100/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700">
+                {/* シフト表テーブル */}
+                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md overflow-hidden">
+                  <div className="overflow-x-auto" style={{ zoom: viewScale === 'compact' ? 0.75 : 1 }}>
+                    <table className="w-full border-collapse text-xs text-left">
+                      <thead>
+                        <tr className="bg-slate-100/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700">
                           <th className="sticky left-0 z-10 bg-slate-100 dark:bg-slate-900 p-2.5 font-extrabold text-slate-700 dark:text-slate-200 min-w-[110px] shadow-sm">
                             スタッフ名
                           </th>
@@ -1236,41 +1310,40 @@ ${JSON.stringify(summaryData, null, 2)}
                           return (
                             <tr key={m.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/40 transition-colors">
                               <td className="sticky left-0 z-10 bg-white dark:bg-slate-800 p-2.5 font-bold text-slate-800 dark:text-slate-100 truncate max-w-[120px] shadow-sm">
-                            {m.name}
-                          </td>
-                          {daysList.map(d => {
-                            const shiftId = memberShifts[d.day] || 'OFF';
-                            const shift = SHIFT_TYPES[shiftId] || SHIFT_TYPES.OFF;
-                            const wish = memberWishes[d.day];
-
-                            // セルのアラート状態を確認
-                            const cellWarnings = warnings.filter(w => w.memberId === m.id && w.day === d.day);
-                            const hasDanger = cellWarnings.some(w => w.severity === 'danger');
-                            const hasWarning = cellWarnings.some(w => w.severity === 'warning');
-                            
-                            let alertClass = "";
-                            if (hasDanger) {
-                              alertClass = "ring-2 ring-rose-500 ring-offset-1 bg-rose-50 dark:bg-rose-900/40 animate-pulse";
-                            } else if (hasWarning) {
-                              alertClass = "ring-2 ring-orange-400 ring-offset-1 bg-orange-50 dark:bg-orange-900/40 animate-pulse";
-                            }
-
-                            return (
-                              <td
-                                key={d.day}
-                                onClick={() => setSelectedCell({ memberId: m.id, memberName: m.name, day: d.day, dayOfWeek: d.dayOfWeek, currentShift: shiftId })}
-                                className="p-1 text-center border-l border-slate-100 dark:border-slate-700/40 cursor-pointer hover:opacity-80 transition-opacity relative"
-                              >
-                                <div className={`py-1 rounded-md text-xs font-bold border ${shift.bg} ${shift.text} ${shift.border} shadow-sm ${alertClass}`}>
-                                  {shift.short}
-                                </div>
-                                {wish && (
-                                  <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-orange-500" title="希望指定あり" />
-                                )}
+                                {m.name}
                               </td>
-                            );
-                          })}
-                          <td className="p-2 text-center font-black bg-slate-50/50 dark:bg-slate-800/40 border-l border-slate-200 dark:border-slate-700">
+                              {daysList.map(d => {
+                                const shiftId = memberShifts[d.day] || 'OFF';
+                                const shift = SHIFT_TYPES[shiftId] || SHIFT_TYPES.OFF;
+                                const wish = memberWishes[d.day];
+
+                                const cellWarnings = warnings.filter(w => w.memberId === m.id && w.day === d.day);
+                                const hasDanger = cellWarnings.some(w => w.severity === 'danger');
+                                const hasWarning = cellWarnings.some(w => w.severity === 'warning');
+                                
+                                let alertClass = "";
+                                if (hasDanger) {
+                                  alertClass = "ring-2 ring-rose-500 ring-offset-1 bg-rose-50 dark:bg-rose-900/40 animate-pulse";
+                                } else if (hasWarning) {
+                                  alertClass = "ring-2 ring-orange-400 ring-offset-1 bg-orange-50 dark:bg-orange-900/40 animate-pulse";
+                                }
+
+                                return (
+                                  <td
+                                    key={d.day}
+                                    onClick={() => setSelectedCell({ memberId: m.id, memberName: m.name, day: d.day, dayOfWeek: d.dayOfWeek, currentShift: shiftId })}
+                                    className="p-1 text-center border-l border-slate-100 dark:border-slate-700/40 cursor-pointer hover:opacity-80 transition-opacity relative"
+                                  >
+                                    <div className={`py-1 rounded-md text-xs font-bold border ${shift.bg} ${shift.text} ${shift.border} shadow-sm ${alertClass}`}>
+                                      {shift.short}
+                                    </div>
+                                    {wish && (
+                                      <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-orange-500" title="希望指定あり" />
+                                    )}
+                                  </td>
+                                );
+                              })}
+                              <td className="p-2 text-center font-black bg-slate-50/50 dark:bg-slate-800/40 border-l border-slate-200 dark:border-slate-700">
                                 <span className={`inline-block px-1.5 py-0.5 rounded-md ${
                                   isMatchRequired 
                                     ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50' 
@@ -1307,72 +1380,71 @@ ${JSON.stringify(summaryData, null, 2)}
                             );
                           })}
                           <td className="bg-slate-200/60 dark:bg-slate-800 border-l border-slate-300 dark:border-slate-700"></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* シフト表上で直接確認できるルール検証サマリー（表の下に移動） */}
-            <div className={`rounded-2xl p-3.5 border transition-all ${
-              warnings.length === 0
-                ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60'
-                : 'bg-rose-50/80 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/60'
-            }`}>
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center space-x-2.5">
-                  {warnings.length === 0 ? (
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  ) : (
-                    <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0" />
-                  )}
-                  <div>
-                    <span className={`text-xs font-black ${warnings.length === 0 ? 'text-emerald-800 dark:text-emerald-200' : 'text-rose-800 dark:text-rose-200'}`}>
-                      {warnings.length === 0 ? '全ルール点検クリア (出勤日数・連勤・早い出勤・希望の一致の違反なし)' : `ルール点検アラート (${warnings.length}件検出)`}
-                    </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
-                      {warnings.length === 0
-                        ? '中→早・遅→中・遅→早や6連勤以上、希望との不一致は発生していません'
-                        : '以下の項目に改善が必要です（該当セルは赤枠・オレンジ枠で強調されています）'}
-                    </span>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-                
-                {warnings.length > 0 && (
-                  <button
-                    onClick={() => setActiveTab('warnings')}
-                    className="text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:underline px-2 py-1 bg-white/70 dark:bg-slate-900/60 rounded-lg border border-rose-200 dark:border-rose-800"
-                  >
-                    詳細ルールタブへ →
-                  </button>
-                )}
-              </div>
 
-              {warnings.length > 0 && (
-                <div className="mt-2.5 pt-2 border-t border-rose-200/60 dark:border-rose-800/50 space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                  {warnings.slice(0, 5).map((w, idx) => (
-                    <div key={idx} className={`flex items-center space-x-2 text-[11px] font-bold ${w.severity === 'danger' ? 'text-rose-800 dark:text-rose-200' : 'text-orange-800 dark:text-orange-300'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${w.severity === 'danger' ? 'bg-rose-500' : 'bg-orange-500'}`} />
-                      <span className="truncate">{w.message}</span>
+                {/* シフト表上で直接確認できるルール検証サマリー */}
+                <div className={`rounded-2xl p-3.5 border transition-all ${
+                  warnings.length === 0
+                    ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60'
+                    : 'bg-rose-50/80 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/60'
+                }`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center space-x-2.5">
+                      {warnings.length === 0 ? (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0" />
+                      )}
+                      <div>
+                        <span className={`text-xs font-black ${warnings.length === 0 ? 'text-emerald-800 dark:text-emerald-200' : 'text-rose-800 dark:text-rose-200'}`}>
+                          {warnings.length === 0 ? '全ルール点検クリア (出勤日数・連勤・早い出勤・希望の一致の違反なし)' : `ルール点検アラート (${warnings.length}件検出)`}
+                        </span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+                          {warnings.length === 0
+                            ? '中→早・遅→中・遅→早や6連勤以上、希望との不一致は発生していません'
+                            : '以下の項目に改善が必要です（該当セルは赤枠・オレンジ枠で強調されています）'}
+                        </span>
+                      </div>
                     </div>
-                  ))}
-                  {warnings.length > 5 && (
-                    <div className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold pl-3.5">
-                      ...他 {warnings.length - 5} 件のアラートがあります（ルール検証タブで全件確認できます）
+                    
+                    {warnings.length > 0 && (
+                      <button
+                        onClick={() => setActiveTab('warnings')}
+                        className="text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:underline px-2 py-1 bg-white/70 dark:bg-slate-900/60 rounded-lg border border-rose-200 dark:border-rose-800"
+                      >
+                        詳細ルールタブへ →
+                      </button>
+                    )}
+                  </div>
+
+                  {warnings.length > 0 && (
+                    <div className="mt-2.5 pt-2 border-t border-rose-200/60 dark:border-rose-800/50 space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                      {warnings.slice(0, 5).map((w, idx) => (
+                        <div key={idx} className={`flex items-center space-x-2 text-[11px] font-bold ${w.severity === 'danger' ? 'text-rose-800 dark:text-rose-200' : 'text-orange-800 dark:text-orange-300'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${w.severity === 'danger' ? 'bg-rose-500' : 'bg-orange-500'}`} />
+                          <span className="truncate">{w.message}</span>
+                        </div>
+                      ))}
+                      {warnings.length > 5 && (
+                        <div className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold pl-3.5">
+                          ...他 {warnings.length - 5} 件のアラートがあります（ルール検証タブで全件確認できます）
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
-            </div>
 
-          </div>
-        )}
+              </div>
+            )}
 
-        {/* 2. 希望シフト入力 タブ */}
+            {/* 2. 希望シフト入力 タブ */}
             {activeTab === 'wishes' && (
               <div className="space-y-4">
                 
-                {/* 必須出勤日数の設定 */}
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div>
                     <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
@@ -1396,7 +1468,6 @@ ${JSON.stringify(summaryData, null, 2)}
                   </div>
                 </div>
 
-                {/* AI テキスト＆画像 解析エリア */}
                 <div className="bg-slate-800 text-white rounded-2xl p-4 shadow-md space-y-3 border border-slate-700">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
@@ -1447,7 +1518,6 @@ ${JSON.stringify(summaryData, null, 2)}
                   </div>
                 </div>
 
-                {/* アクティブ区分選択パレット */}
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
@@ -1461,7 +1531,6 @@ ${JSON.stringify(summaryData, null, 2)}
                     </div>
                   </div>
 
-                  {/* シフト区分パレット */}
                   <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-700">
                     <span className="text-xs font-extrabold text-slate-600 dark:text-slate-300 mr-1">アクティブ区分:</span>
                     
@@ -1498,7 +1567,6 @@ ${JSON.stringify(summaryData, null, 2)}
                   </div>
                 </div>
 
-                {/* 月曜日始まりの標準7列カレンダー入力（スタッフ別） */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {members.map(m => {
                     const memberWishes = currentWishes[m.id] || {};
@@ -1513,7 +1581,6 @@ ${JSON.stringify(summaryData, null, 2)}
                           </span>
                         </div>
 
-                        {/* 7列月曜始まりカレンダーグリッド */}
                         <div className="space-y-1">
                           <div className="grid grid-cols-7 text-center font-extrabold text-[11px] pb-1 border-b border-slate-200 dark:border-slate-700">
                             <div className="text-slate-600 dark:text-slate-300">月</div>
