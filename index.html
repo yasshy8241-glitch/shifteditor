@@ -151,7 +151,7 @@
       MIDDLE: { id: 'MIDDLE', label: '中番', time: '11:00-20:00', short: '中', bg: 'bg-amber-100 dark:bg-amber-950/70', text: 'text-amber-700 dark:text-amber-300', border: 'border-amber-300 dark:border-amber-800' },
       LATE: { id: 'LATE', label: '遅番', time: '13:00-22:00', short: '遅', bg: 'bg-blue-100 dark:bg-blue-950/70', text: 'text-blue-700 dark:text-blue-300', border: 'border-blue-300 dark:border-blue-800' },
       OFFICE: { id: 'OFFICE', label: '事務局', time: '事務局勤務', short: '事', bg: 'bg-teal-100 dark:bg-teal-950/70', text: 'text-teal-700 dark:text-teal-300', border: 'border-teal-300 dark:border-teal-800' },
-      TRAINING: { id: 'TRAINING', label: '社内活動', time: '社内研修等', short: '社', bg: 'bg-emerald-100 dark:bg-emerald-950/70', text: 'text-emerald-700 dark:text-emerald-300', border: 'border-emerald-300 dark:border-emerald-800' },
+      TRAINING: { id: 'TRAINING', label: '社内', time: '社内活動等', short: '社', bg: 'bg-emerald-100 dark:bg-emerald-950/70', text: 'text-emerald-700 dark:text-emerald-300', border: 'border-emerald-300 dark:border-emerald-800' },
       OTHER_STORE: { id: 'OTHER_STORE', label: '他店舗', time: '他店舗応援', short: '他', bg: 'bg-purple-100 dark:bg-purple-950/70', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-300 dark:border-purple-800' },
       REWARD: { id: 'REWARD', label: '褒賞', time: '特別勤務', short: '褒', bg: 'bg-lime-100 dark:bg-lime-950/70', text: 'text-lime-700 dark:text-lime-300', border: 'border-lime-300 dark:border-lime-800' },
       OFF: { id: 'OFF', label: '休み', time: '休日', short: '休', bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-500 dark:text-slate-400', border: 'border-slate-200 dark:border-slate-700' },
@@ -291,7 +291,6 @@
 
         setSelectedMemberIds(prevSelected => {
           const validSelected = prevSelected.filter(id => currentIds.includes(id));
-          // 初回ロード等で全メンバーが入れ替わった場合は全員選択にする
           if (validSelected.length === 0 && currentIds.length > 0) {
             return currentIds;
           }
@@ -334,7 +333,6 @@
               if (docSnap.exists) {
                 const data = docSnap.data();
                 if (data.members) {
-                  // roleが未設定の既存データは'regular'(常勤)として補完
                   const normalizedMembers = data.members.map(m => ({
                     ...m,
                     role: m.role || 'regular'
@@ -544,7 +542,6 @@
         e.preventDefault();
       };
 
-      // スタッフ選択フィルターのトグル操作
       const toggleStaffSelection = (id) => {
         setSelectedMemberIds(prev => {
           if (prev.includes(id)) {
@@ -593,7 +590,9 @@
           const memberShifts = prevData.shifts[m.id] || {};
           let consecutiveWorkAtEnd = 0;
           for (let d = prevDaysInMonth; d >= 1; d--) {
-            if (memberShifts[d] && memberShifts[d] !== 'OFF') {
+            const s = memberShifts[d];
+            // 褒賞(REWARD)も出勤としてカウントしない
+            if (s && s !== 'OFF' && s !== 'REWARD') {
               consecutiveWorkAtEnd++;
             } else {
               break;
@@ -607,13 +606,14 @@
       };
 
       const getExactConsecutiveWorkDays = (memberId, day, shiftTypeProposed, shiftsMap, prevMonthInfo) => {
-        if (!shiftTypeProposed || shiftTypeProposed === 'OFF') return 0;
+        if (!shiftTypeProposed || shiftTypeProposed === 'OFF' || shiftTypeProposed === 'REWARD') return 0;
 
         const temp = { ...shiftsMap[memberId], [day]: shiftTypeProposed };
 
         let prevWork = 0;
         for (let d = day - 1; d >= 1; d--) {
-          if (temp[d] && temp[d] !== 'OFF') prevWork++;
+          const s = temp[d];
+          if (s && s !== 'OFF' && s !== 'REWARD') prevWork++;
           else break;
         }
         if (day - 1 - prevWork < 1) {
@@ -622,7 +622,8 @@
 
         let nextWork = 0;
         for (let d = day + 1; d <= daysInMonth; d++) {
-          if (temp[d] && temp[d] !== 'OFF') nextWork++;
+          const s = temp[d];
+          if (s && s !== 'OFF' && s !== 'REWARD') nextWork++;
           else break;
         }
 
@@ -630,7 +631,7 @@
       };
 
       const isShiftEarlierThan = (prevShift, nextShift) => {
-        if (!prevShift || prevShift === 'OFF' || !nextShift || nextShift === 'OFF') return false;
+        if (!prevShift || prevShift === 'OFF' || prevShift === 'REWARD' || !nextShift || nextShift === 'OFF' || nextShift === 'REWARD') return false;
         const rank = { EARLY: 1, MIDDLE: 2, LATE: 3 };
         const prevRank = rank[prevShift] || 0;
         const nextRank = rank[nextShift] || 0;
@@ -638,7 +639,7 @@
       };
 
       const isReverseShiftBidirectional = (memberId, day, newShiftType, shiftsMap, prevMonthInfo) => {
-        if (!newShiftType || newShiftType === 'OFF') return false;
+        if (!newShiftType || newShiftType === 'OFF' || newShiftType === 'REWARD') return false;
 
         const prevShift = day > 1 ? shiftsMap[memberId]?.[day - 1] : prevMonthInfo?.[memberId]?.lastDayShift;
         if (isShiftEarlierThan(prevShift, newShiftType)) return true;
@@ -759,7 +760,6 @@
         reader.readAsDataURL(file);
       };
 
-      // ★選択中のスタッフのみを対象に自動シフト生成（非選択スタッフは現在のシフトを維持して後から手動補填可能）
       const generateAutoShifts = () => {
         const targetMembers = members.filter(m => selectedMemberIds.includes(m.id));
         if (targetMembers.length === 0) {
@@ -774,7 +774,6 @@
           const prevMonthInfo = getPrevMonthLastDaysShifts();
           const requiredOffDays = daysInMonth - requiredWorkDays;
 
-          // 全スタッフの枠を準備（非選択スタッフは現在のシフトをそのまま維持）
           members.forEach(m => {
             if (selectedMemberIds.includes(m.id)) {
               newShifts[m.id] = {};
@@ -789,7 +788,6 @@
             }
           });
 
-          // 選択中スタッフの希望を反映
           targetMembers.forEach(m => {
             for (let d = 1; d <= daysInMonth; d++) {
               const wish = currentWishes[m.id]?.[d];
@@ -799,7 +797,6 @@
             }
           });
 
-          // 前半・後半で休みの偏りを防止（選択中スタッフのみ）
           const halfMonth = Math.floor(daysInMonth / 2);
           targetMembers.forEach((m, mIdx) => {
             const offNeededHalf = Math.round(requiredOffDays / 2);
@@ -839,7 +836,8 @@
             const pool = targetMembers.filter(m => {
               if (newShifts[m.id][day] !== null && newShifts[m.id][day] !== 'OFF') return false;
               if (currentWishes[m.id]?.[day]?.type === 'OFF') return false;
-              const currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
+              // 褒賞は出勤数にカウントしない
+              const currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
               if (currentWorkCount >= requiredWorkDays) return false;
               return true;
             });
@@ -854,8 +852,8 @@
             if (candidates.length === 0) return null;
 
             candidates.sort((a, b) => {
-              const workA = Object.values(newShifts[a.id]).filter(s => s && s !== 'OFF').length;
-              const workB = Object.values(newShifts[b.id]).filter(s => s && s !== 'OFF').length;
+              const workA = Object.values(newShifts[a.id]).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
+              const workB = Object.values(newShifts[b.id]).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
               return workA - workB;
             });
 
@@ -888,7 +886,7 @@
           });
 
           targetMembers.forEach(m => {
-            let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
+            let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
 
             while (currentWorkCount < requiredWorkDays) {
               let validDays = [];
@@ -897,7 +895,10 @@
                   const cons = getExactConsecutiveWorkDays(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
                   const isRev = isReverseShiftBidirectional(m.id, d, 'MIDDLE', newShifts, prevMonthInfo);
                   if (!isRev && cons <= 5) {
-                    const totalWorkingToday = members.filter(mem => newShifts[mem.id][d] && newShifts[mem.id][d] !== 'OFF').length;
+                    const totalWorkingToday = members.filter(mem => {
+                      const s = newShifts[mem.id][d];
+                      return s && s !== 'OFF' && s !== 'REWARD';
+                    }).length;
                     validDays.push({ day: d, totalWorkingToday, cons });
                   }
                 }
@@ -920,9 +921,8 @@
           });
 
           targetMembers.forEach(m => {
-            let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF').length;
+            let currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
 
-            // サブスタッフ以外（常勤スタッフ）のみ、必須出勤日数までの強制埋めを行う
             if ((m.role || 'regular') === 'regular') {
               while (currentWorkCount < requiredWorkDays) {
                 let openDays = [];
@@ -958,8 +958,11 @@
               let candidatesForRemove = [];
               for (let d = 1; d <= daysInMonth; d++) {
                 const shiftType = newShifts[m.id][d];
-                if (shiftType && shiftType !== 'OFF' && !currentWishes[m.id]?.[d]?.type) {
-                  const totalWorkingToday = members.filter(mem => newShifts[mem.id][d] && newShifts[mem.id][d] !== 'OFF').length;
+                if (shiftType && shiftType !== 'OFF' && shiftType !== 'REWARD' && !currentWishes[m.id]?.[d]?.type) {
+                  const totalWorkingToday = members.filter(mem => {
+                    const s = newShifts[mem.id][d];
+                    return s && s !== 'OFF' && s !== 'REWARD';
+                  }).length;
                   if (totalWorkingToday > 2) {
                     candidatesForRemove.push({ day: d, totalWorkingToday });
                   }
@@ -968,7 +971,7 @@
               if (candidatesForRemove.length === 0) {
                 for (let d = 1; d <= daysInMonth; d++) {
                   const shiftType = newShifts[m.id][d];
-                  if (shiftType && shiftType !== 'OFF') {
+                  if (shiftType && shiftType !== 'OFF' && shiftType !== 'REWARD') {
                     candidatesForRemove.push({ day: d, totalWorkingToday: 99 });
                   }
                 }
@@ -1026,10 +1029,10 @@
         members.forEach(m => {
           const memberShifts = currentShifts[m.id] || {};
           const memberWishes = currentWishes[m.id] || {};
-          const actualDays = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
+          // 褒賞(REWARD)を除外して出勤日数をカウント
+          const actualDays = Object.values(memberShifts).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
           const isSub = m.role === 'sub';
 
-          // ★サブスタッフは必須出勤日数の不一致エラーから除外（超過時のみ通知、未満はエラーにしない）
           if (!isSub && actualDays !== requiredWorkDays) {
             list.push({
               type: 'EXACT_DAYS_MISMATCH',
@@ -1057,7 +1060,8 @@
               });
             }
 
-            if (current && current !== 'OFF') {
+            // 褒賞(REWARD)も連勤カウント対象外とする
+            if (current && current !== 'OFF' && current !== 'REWARD') {
               consecutiveWork++;
               if (consecutiveWork === 5) {
                 list.push({
@@ -1103,7 +1107,9 @@
           const earlyCount = dayShifts.filter(s => s === 'EARLY').length;
           const middleCount = dayShifts.filter(s => s === 'MIDDLE').length;
           const lateCount = dayShifts.filter(s => s === 'LATE').length;
-          const coreWorking = dayShifts.filter(s => s && !['OFF', 'OFFICE', 'TRAINING', 'OTHER_STORE'].includes(s)).length;
+          
+          // 店舗出勤者からOFF, OFFICE, TRAINING, OTHER_STORE, REWARD などを除外
+          const coreWorking = dayShifts.filter(s => s && !['OFF', 'OFFICE', 'TRAINING', 'OTHER_STORE', 'REWARD'].includes(s)).length;
 
           if (coreWorking === 0) {
             list.push({
@@ -1144,20 +1150,24 @@
       };
 
       const exportToCsv = () => {
-        const headers = ['スタッフ名', '区分', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '他店舗', '事務局', '社内活動', '休み'];
+        const headers = ['スタッフ名', '区分', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '他店舗', '事務局', '社内', '褒賞', '休み'];
         const rows = members.map(m => {
           const memberShifts = currentShifts[m.id] || {};
           const roleLabel = m.role === 'sub' ? 'サブ' : '常勤';
           const daysData = daysList.map(d => SHIFT_TYPES[memberShifts[d.day]]?.label || '休み');
-          const workCount = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
+          
+          // CSVの集計でも褒賞(REWARD)を出勤日数から除外
+          const workCount = Object.values(memberShifts).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
           const earlyCount = Object.values(memberShifts).filter(s => s === 'EARLY').length;
           const middleCount = Object.values(memberShifts).filter(s => s === 'MIDDLE').length;
           const lateCount = Object.values(memberShifts).filter(s => s === 'LATE').length;
           const otherStoreCount = Object.values(memberShifts).filter(s => s === 'OTHER_STORE').length;
           const officeCount = Object.values(memberShifts).filter(s => s === 'OFFICE').length;
           const trainingCount = Object.values(memberShifts).filter(s => s === 'TRAINING').length;
-          const offCount = Object.values(memberShifts).filter(s => s === 'OFF').length;
-          return [m.name, roleLabel, ...daysData, workCount, earlyCount, middleCount, lateCount, otherStoreCount, officeCount, trainingCount, offCount];
+          const rewardCount = Object.values(memberShifts).filter(s => s === 'REWARD').length;
+          const offCount = Object.values(memberShifts).filter(s => s === 'OFF' || !s).length;
+          
+          return [m.name, roleLabel, ...daysData, workCount, earlyCount, middleCount, lateCount, otherStoreCount, officeCount, trainingCount, rewardCount, offCount];
         });
 
         const csvContent = '\uFEFF' + [headers, ...rows].map(e => e.map(cell => `"${cell}"`).join(',')).join('\n');
@@ -1180,7 +1190,7 @@
             requiredDaysForRegular: requiredWorkDays,
             members: members.map(m => {
               const mShifts = currentShifts[m.id] || {};
-              const workDays = Object.values(mShifts).filter(s => s && s !== 'OFF').length;
+              const workDays = Object.values(mShifts).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
               const shiftsDetail = daysList.map(d => `${d.day}日:${SHIFT_TYPES[mShifts[d.day]]?.short || '休'}`).join(', ');
               return { name: m.name, role: m.role === 'sub' ? 'サブ(日数制限なし)' : '常勤', workDays, schedule: shiftsDetail };
             }),
@@ -1267,11 +1277,9 @@ ${JSON.stringify(summaryData, null, 2)}
         updateMembers(newMembers);
       };
 
-      // 選択フィルター適用後のメンバー一覧
       const displayedMembers = members.filter(m => selectedMemberIds.includes(m.id));
       const isCompact = viewScale === 'compact';
 
-      // 共通のスタッフ選択フィルターバーコンポーネント
       const StaffFilterBar = ({ showAutoGenHint = false }) => (
         <div className="bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1350,7 +1358,7 @@ ${JSON.stringify(summaryData, null, 2)}
       return (
         <div className={`min-h-screen font-sans ${darkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-white text-slate-800'}`}>
           
-          {/* ヘッダー (大画面・ウルトラワイドでも見やすいよう横幅を広く活用) */}
+          {/* ヘッダー */}
           <header className="sticky top-0 z-40 backdrop-blur-md bg-white/95 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 px-4 py-2.5 shadow-sm">
             <div className="w-full max-w-[98vw] 2xl:max-w-[96vw] mx-auto flex flex-wrap items-center justify-between gap-3">
               
@@ -1404,10 +1412,9 @@ ${JSON.stringify(summaryData, null, 2)}
                 </button>
               </div>
 
-              {/* ボタン操作 */}
+              {/* 操作ボタン類 */}
               <div className="flex flex-wrap items-center gap-2">
 
-                {/* 画面サイズスケール切替 */}
                 <div className="hidden lg:flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] font-bold">
                   {[
                     { id: 'auto', label: '自動' },
@@ -1430,7 +1437,6 @@ ${JSON.stringify(summaryData, null, 2)}
                   ))}
                 </div>
 
-                {/* クラウド同期ステータス ＆ ログインボタン */}
                 {user ? (
                   <div className="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-700">
                     <div className="flex items-center space-x-1">
@@ -1565,10 +1571,8 @@ ${JSON.stringify(summaryData, null, 2)}
             {activeTab === 'matrix' && (
               <div className="space-y-3">
                 
-                {/* スタッフ選択フィルターバー */}
                 <StaffFilterBar showAutoGenHint={true} />
 
-                {/* 凡例 ＆ 条件ルールカード */}
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
                   <div className="lg:col-span-3 bg-white dark:bg-slate-800 rounded-2xl p-3 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col justify-center space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1616,7 +1620,6 @@ ${JSON.stringify(summaryData, null, 2)}
                   </div>
                 </div>
 
-                {/* シフト表テーブル（isCompact時は table-fixed で横スクロールなしに1画面完全収容） */}
                 <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md overflow-hidden">
                   <div className="overflow-x-auto relative">
                     <table className={`w-full border-collapse text-xs text-left ${isCompact ? 'table-fixed' : ''}`}>
@@ -1656,7 +1659,9 @@ ${JSON.stringify(summaryData, null, 2)}
                         {displayedMembers.map(m => {
                           const memberShifts = currentShifts[m.id] || {};
                           const memberWishes = currentWishes[m.id] || {};
-                          const actualWorkDays = Object.values(memberShifts).filter(s => s && s !== 'OFF').length;
+                          
+                          // 出勤日数からOFFおよびREWARD(褒賞)を除外してカウント
+                          const actualWorkDays = Object.values(memberShifts).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
                           const isSub = m.role === 'sub';
                           const isMatchRequired = actualWorkDays === requiredWorkDays;
 
@@ -1745,7 +1750,7 @@ ${JSON.stringify(summaryData, null, 2)}
                           );
                         })}
 
-                        {/* 日別出勤合計（店舗全体の合計を常に把握できるよう全メンバーで集計） */}
+                        {/* 日別出勤合計 */}
                         <tr className="bg-slate-100 dark:bg-slate-900 border-t-2 border-slate-300 dark:border-slate-700 font-bold text-[11px]">
                           <td className={`sticky left-0 z-20 bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] align-middle ${
                             isCompact ? 'p-1.5 text-[10px]' : 'p-2.5'
@@ -1754,10 +1759,11 @@ ${JSON.stringify(summaryData, null, 2)}
                           </td>
                           {daysList.map(d => {
                             const dayShifts = members.map(m => currentShifts[m.id]?.[d.day]);
-                            const coreShifts = dayShifts.filter(s => s && !['OFF', 'OFFICE', 'TRAINING', 'OTHER_STORE'].includes(s));
+                            // 店舗出勤計からOFF, OFFICE, TRAINING, OTHER_STORE, REWARD を除外
+                            const coreShifts = dayShifts.filter(s => s && !['OFF', 'OFFICE', 'TRAINING', 'OTHER_STORE', 'REWARD'].includes(s));
                             const coreCount = coreShifts.length;
                             
-                            const otherShifts = dayShifts.filter(s => s && ['OFFICE', 'TRAINING', 'OTHER_STORE'].includes(s));
+                            const otherShifts = dayShifts.filter(s => s && ['OFFICE', 'TRAINING', 'OTHER_STORE', 'REWARD'].includes(s));
                             const otherCount = otherShifts.length;
 
                             const isShortage = coreCount === 0;
@@ -1789,7 +1795,6 @@ ${JSON.stringify(summaryData, null, 2)}
                   </div>
                 </div>
 
-                {/* シフト表上で直接確認できるルール検証サマリー */}
                 <div className={`rounded-2xl p-3.5 border transition-all ${
                   warnings.length === 0
                     ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60'
@@ -1823,22 +1828,6 @@ ${JSON.stringify(summaryData, null, 2)}
                       </button>
                     )}
                   </div>
-
-                  {warnings.length > 0 && (
-                    <div className="mt-2.5 pt-2 border-t border-rose-200/60 dark:border-rose-800/50 space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                      {warnings.slice(0, 5).map((w, idx) => (
-                        <div key={idx} className={`flex items-center space-x-2 text-[11px] font-bold ${w.severity === 'danger' ? 'text-rose-800 dark:text-rose-200' : 'text-orange-800 dark:text-orange-300'}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${w.severity === 'danger' ? 'bg-rose-500' : 'bg-orange-500'}`} />
-                          <span className="truncate">{w.message}</span>
-                        </div>
-                      ))}
-                      {warnings.length > 5 && (
-                        <div className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold pl-3.5">
-                          ...他 {warnings.length - 5} 件のアラートがあります（ルール検証タブで全件確認できます）
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
 
               </div>
@@ -1848,7 +1837,6 @@ ${JSON.stringify(summaryData, null, 2)}
             {activeTab === 'wishes' && (
               <div className="space-y-4">
                 
-                {/* スタッフ選択フィルターバー（自動生成の対象選択としても機能） */}
                 <StaffFilterBar showAutoGenHint={true} />
 
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -1931,9 +1919,6 @@ ${JSON.stringify(summaryData, null, 2)}
                         <UserCheck className="w-5 h-5 text-emerald-600" />
                         <span>希望区分を選んで「1タップ」または「長押し」でカレンダー登録</span>
                       </h2>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                        アクティブな区分を選び、日付セルを直接タップしてください。セルを長押しすると全区分から直接選択できます。
-                      </p>
                     </div>
                   </div>
 
@@ -1957,15 +1942,9 @@ ${JSON.stringify(summaryData, null, 2)}
                         </button>
                       );
                     })}
-
-                    <span className="text-[11px] text-slate-400 dark:text-slate-500 ml-auto flex items-center space-x-1">
-                      <Info className="w-3.5 h-3.5" />
-                      <span>設定済みのセルを再度タップすると「指定解除」できます</span>
-                    </span>
                   </div>
                 </div>
 
-                {/* 大画面・ウルトラワイドでは3列グリッドにして一覧性を向上 */}
                 <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
                   {displayedMembers.map(m => {
                     const memberWishes = currentWishes[m.id] || {};
@@ -2056,9 +2035,6 @@ ${JSON.stringify(summaryData, null, 2)}
                         <ShieldCheck className="w-5 h-5 text-emerald-600" />
                         <span>シフトルール＆点検検証結果</span>
                       </h2>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        常勤スタッフの必須出勤日数過不足・前日より早い出勤・5連勤注意・6連勤以上の禁止違反のアラート一覧です（サブスタッフは必須日数チェックから除外）。
-                      </p>
                     </div>
                     <div className="text-right">
                       <span className="text-2xl font-black text-rose-500">{warnings.length}</span>
@@ -2071,7 +2047,6 @@ ${JSON.stringify(summaryData, null, 2)}
                   <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-8 text-center space-y-2">
                     <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
                     <h3 className="text-base font-bold text-emerald-800 dark:text-emerald-200">すべてのシフトルールをクリアしています！</h3>
-                    <p className="text-xs text-emerald-600 dark:text-emerald-400">常勤スタッフの必須出勤日数が一致し、連勤・前日より早い出勤の違反はありません。</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -2167,9 +2142,6 @@ ${JSON.stringify(summaryData, null, 2)}
                       <Settings className="w-5 h-5 text-emerald-600" />
                       <span>スタッフ管理（常勤・サブ設定 / 並び替え / 追加・削除）</span>
                     </h2>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                      「常勤 / サブ」バッジをクリックすると区分を切り替えられます。「サブ」のスタッフは必須出勤日数未満でもエラーになりません。
-                    </p>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 pt-2">
@@ -2292,14 +2264,13 @@ ${JSON.stringify(summaryData, null, 2)}
                       );
                     })}
                   </div>
-
                 </div>
               </div>
             )}
 
           </main>
 
-          {/* セルクリック時のシフト直接編集モーダル */}
+          {/* モーダル群 */}
           {selectedCell && (
             <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 max-w-xs w-full border border-slate-200 dark:border-slate-700 shadow-xl space-y-4">
@@ -2308,10 +2279,7 @@ ${JSON.stringify(summaryData, null, 2)}
                     <span className="text-xs font-bold text-slate-500 block">{selectedCell.day}日({selectedCell.dayOfWeek})</span>
                     <span className="text-sm font-extrabold text-slate-800 dark:text-slate-100">{selectedCell.memberName}</span>
                   </div>
-                  <button
-                    onClick={() => setSelectedCell(null)}
-                    className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400"
-                  >
+                  <button onClick={() => setSelectedCell(null)} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400">
                     <X className="w-4 h-4" />
                   </button>
                 </div>
@@ -2332,7 +2300,6 @@ ${JSON.stringify(summaryData, null, 2)}
             </div>
           )}
 
-          {/* 希望シフト用の直接編集モーダル (長押しで表示) */}
           {wishModalParams && (
             <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 max-w-xs w-full border border-slate-200 dark:border-slate-700 shadow-xl space-y-4">
@@ -2341,10 +2308,7 @@ ${JSON.stringify(summaryData, null, 2)}
                     <span className="text-xs font-bold text-slate-500 block">{wishModalParams.day}日の希望シフト指定</span>
                     <span className="text-sm font-extrabold text-slate-800 dark:text-slate-100">{wishModalParams.memberName}</span>
                   </div>
-                  <button
-                    onClick={() => setWishModalParams(null)}
-                    className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400"
-                  >
+                  <button onClick={() => setWishModalParams(null)} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400">
                     <X className="w-4 h-4" />
                   </button>
                 </div>
