@@ -119,6 +119,7 @@
     const Calendar = ({ className }) => <IconBase className={className} d={["M19 4H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2z", "M16 2v4", "M8 2v4", "M3 10h18"]} />;
     const Sparkles = ({ className }) => <IconBase className={className} d={["m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3z", "M5 3v4", "M19 17v4", "M3 5h4", "M17 19h4"]} />;
     const Download = ({ className }) => <IconBase className={className} d={["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"]} />;
+    const Copy = ({ className }) => <IconBase className={className} d={["M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2", "M15 2H9a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1z"]} />;
     const Moon = ({ className }) => <IconBase className={className} d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />;
     const Sun = ({ className }) => <IconBase className={className} d={["M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z", "M12 2v2", "M12 20v2", "m4.93 4.93 1.41 1.41", "m17.66 17.66 1.41 1.41", "M2 12h2", "M20 12h2", "m6.34 17.66-1.41 1.41", "m19.07 4.93-1.41 1.41"]} />;
     const ChevronLeft = ({ className }) => <IconBase className={className} d="m15 18-6-6 6-6" />;
@@ -158,10 +159,15 @@
     };
 
     const INITIAL_MEMBERS = [
-      { id: 'm1', name: '佐藤 店長', role: 'regular' },
-      { id: 'm2', name: '田中 さん', role: 'regular' },
-      { id: 'm3', name: '鈴木 さん', role: 'regular' },
-      { id: 'm4', name: '高橋 さん', role: 'sub' },
+      { id: 'm1', name: '稲川 智也', role: 'regular', area: '横浜', affiliation: 'SCF' },
+      { id: 'm2', name: '吉田 賢大', role: 'regular', area: '横浜', affiliation: 'Function' },
+      { id: 'm3', name: '小泉 知花', role: 'regular', area: '横浜', affiliation: 'Function' },
+      { id: 'm4', name: '原田 俊', role: 'regular', area: '横浜', affiliation: 'SCF' },
+      { id: 'm5', name: '辻 朋紀', role: 'regular', area: '横浜', affiliation: 'Function' },
+      { id: 'm6', name: '渋川 大翔', role: 'sub', area: '関東', affiliation: 'PEER' },
+      { id: 'm7', name: '青木 俊憲', role: 'sub', area: '事務局', affiliation: 'OTF' },
+      { id: 'm8', name: '今町 綾花', role: 'sub', area: '事務局', affiliation: '' },
+      { id: 'm9', name: '古田 奈々', role: 'sub', area: '事務局', affiliation: '' },
     ];
 
     const WEEKDAYS_MON_START = ['月', '火', '水', '木', '金', '土', '日'];
@@ -224,7 +230,7 @@
       const [members, setMembers] = useState(INITIAL_MEMBERS);
       const [requiredWorkDays, setRequiredWorkDays] = useState(20);
       
-      // スタッフ選択フィルター（シフト表表示 ＆ 希望シフト表示 ＆ 自動シフト生成対象）
+      // スタッフ選択フィルター（シフト表表示 ＆ 希望シフト表示 ＆ 自動シフト生成対象 ＆ 一括コピー対象）
       const [selectedMemberIds, setSelectedMemberIds] = useState(() => INITIAL_MEMBERS.map(m => m.id));
 
       const [allMonthlyData, setAllMonthlyData] = useState({});
@@ -238,6 +244,9 @@
       const [aiAnalysisResult, setAiAnalysisResult] = useState('');
       const [toastMessage, setToastMessage] = useState(null);
 
+      // スプレッドシート用コピーモーダルの開閉
+      const [isCopyModalOpen, setIsCopyModalOpen] = useState(false);
+
       const [selectedWishPalette, setSelectedWishPalette] = useState('OFF');
       const [textWishInput, setTextWishInput] = useState('');
       const [isParsingWish, setIsParsingWish] = useState(false);
@@ -245,8 +254,12 @@
 
       const [newMemberName, setNewMemberName] = useState('');
       const [newMemberRole, setNewMemberRole] = useState('regular'); // 'regular' | 'sub'
+      const [newMemberArea, setNewMemberArea] = useState('横浜');
+      const [newMemberAffiliation, setNewMemberAffiliation] = useState('');
       const [editingMemberId, setEditingMemberId] = useState(null);
       const [editingMemberName, setEditingMemberName] = useState('');
+      const [editingMemberArea, setEditingMemberArea] = useState('');
+      const [editingMemberAffiliation, setEditingMemberAffiliation] = useState('');
 
       const [wishModalParams, setWishModalParams] = useState(null);
       const pressTimer = useRef(null);
@@ -335,7 +348,9 @@
                 if (data.members) {
                   const normalizedMembers = data.members.map(m => ({
                     ...m,
-                    role: m.role || 'regular'
+                    role: m.role || 'regular',
+                    area: m.area ?? (m.role === 'sub' ? '事務局' : '横浜'),
+                    affiliation: m.affiliation ?? ''
                   }));
                   setMembers(normalizedMembers);
                 }
@@ -576,6 +591,113 @@
         }
       };
 
+      // --- クリップボードコピー共通関数 ---
+      const copyTextToClipboard = async (text, successMsg) => {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+          }
+          showToast(successMsg);
+        } catch (err) {
+          console.error('Copy error:', err);
+          showToast('コピーに失敗しました。ブラウザの権限をご確認ください。');
+        }
+      };
+
+      // スプレッドシートのセル値変換（休み＝空欄、それ以外＝ラベル文字列）
+      const formatShiftForSheet = (shiftId) => {
+        if (!shiftId || shiftId === 'OFF') return '';
+        return SHIFT_TYPES[shiftId]?.label || '';
+      };
+
+      // 希望シフト備考欄（各店管理用シートのI列）向けテキスト生成
+      const formatWishNoteForMember = (memberId) => {
+        const mWishes = currentWishes[memberId] || {};
+        const entries = Object.entries(mWishes)
+          .map(([d, w]) => ({ day: Number(d), type: w?.type }))
+          .filter(x => x.type)
+          .sort((a, b) => a.day - b.day);
+
+        if (entries.length === 0) return 'なし';
+
+        // 種類ごとに日付をまとめる（例: 1,8休 7早）
+        const grouped = {};
+        entries.forEach(({ day, type }) => {
+          const shortLabel = type === 'OFF' ? '休' : (SHIFT_TYPES[type]?.short || '');
+          if (!grouped[shortLabel]) grouped[shortLabel] = [];
+          grouped[shortLabel].push(day);
+        });
+
+        return Object.entries(grouped)
+          .map(([shortLabel, days]) => `${days.join(',')}${shortLabel}`)
+          .join(' ');
+      };
+
+      // 1. 両シート共通：シフト枠のみ（1日〜末日）一括コピー（表示中のメンバー対象）
+      const copyShiftCellsOnly = (targetList = displayedMembers) => {
+        const rows = targetList.map(m => {
+          const mShifts = currentShifts[m.id] || {};
+          return daysList.map(d => formatShiftForSheet(mShifts[d.day])).join('\t');
+        });
+        const tsv = rows.join('\n');
+        copyTextToClipboard(
+          tsv,
+          `【${targetList.length}名分】1日〜${daysInMonth}日のシフト枠をコピーしました！（休み＝空欄）`
+        );
+      };
+
+      // 2. 個別スタッフの1行コピー（1日〜末日）
+      const copySingleMemberRow = (member) => {
+        const mShifts = currentShifts[member.id] || {};
+        const rowTsv = daysList.map(d => formatShiftForSheet(mShifts[d.day])).join('\t');
+        copyTextToClipboard(
+          rowTsv,
+          `「${member.name}」のシフト1行（1日〜${daysInMonth}日）をコピーしました！`
+        );
+      };
+
+      // 3. 【横浜共有用】A列（氏名）＋B列（エリア）＋C列〜（1日〜末日）一括コピー
+      const copyForSharedStoreSheet = () => {
+        const rows = displayedMembers.map(m => {
+          const mShifts = currentShifts[m.id] || {};
+          const areaText = m.area || (m.role === 'sub' ? '事務局' : '横浜');
+          const shiftCells = daysList.map(d => formatShiftForSheet(mShifts[d.day]));
+          return [m.name, areaText, ...shiftCells].join('\t');
+        });
+        copyTextToClipboard(
+          rows.join('\n'),
+          `【横浜共有用】氏名＋エリア＋シフト（${displayedMembers.length}名分）をコピーしました！`
+        );
+      };
+
+      // 4. 【各店管理用】I列「シフト希望備考欄」のみ縦1列コピー
+      const copyWishNotesColumn = () => {
+        const rows = displayedMembers.map(m => formatWishNoteForMember(m.id));
+        copyTextToClipboard(
+          rows.join('\n'),
+          `【各店管理用】シフト希望備考欄（${displayedMembers.length}名分）をコピーしました！`
+        );
+      };
+
+      // 5. 日付・曜日ヘッダー（2行分：11/1〜 ＆ 日・月〜）コピー
+      const copyDateHeadersForSheet = () => {
+        const dateRow = daysList.map(d => `${month}/${d.day}`).join('\t');
+        const dowRow = daysList.map(d => d.dayOfWeek).join('\t');
+        copyTextToClipboard(
+          `${dateRow}\n${dowRow}`,
+          `${month}/1〜${month}/${daysInMonth} の日付・曜日ヘッダー（2行）をコピーしました！`
+        );
+      };
+
       const getPrevMonthLastDaysShifts = () => {
         const prevDate = new Date(year, month - 2, 1);
         const prevKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
@@ -591,7 +713,6 @@
           let consecutiveWorkAtEnd = 0;
           for (let d = prevDaysInMonth; d >= 1; d--) {
             const s = memberShifts[d];
-            // 褒賞(REWARD)も出勤としてカウントしない
             if (s && s !== 'OFF' && s !== 'REWARD') {
               consecutiveWorkAtEnd++;
             } else {
@@ -836,7 +957,6 @@
             const pool = targetMembers.filter(m => {
               if (newShifts[m.id][day] !== null && newShifts[m.id][day] !== 'OFF') return false;
               if (currentWishes[m.id]?.[day]?.type === 'OFF') return false;
-              // 褒賞は出勤数にカウントしない
               const currentWorkCount = Object.values(newShifts[m.id]).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
               if (currentWorkCount >= requiredWorkDays) return false;
               return true;
@@ -1029,7 +1149,6 @@
         members.forEach(m => {
           const memberShifts = currentShifts[m.id] || {};
           const memberWishes = currentWishes[m.id] || {};
-          // 褒賞(REWARD)を除外して出勤日数をカウント
           const actualDays = Object.values(memberShifts).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
           const isSub = m.role === 'sub';
 
@@ -1060,7 +1179,6 @@
               });
             }
 
-            // 褒賞(REWARD)も連勤カウント対象外とする
             if (current && current !== 'OFF' && current !== 'REWARD') {
               consecutiveWork++;
               if (consecutiveWork === 5) {
@@ -1107,8 +1225,6 @@
           const earlyCount = dayShifts.filter(s => s === 'EARLY').length;
           const middleCount = dayShifts.filter(s => s === 'MIDDLE').length;
           const lateCount = dayShifts.filter(s => s === 'LATE').length;
-          
-          // 店舗出勤者からOFF, OFFICE, TRAINING, OTHER_STORE, REWARD などを除外
           const coreWorking = dayShifts.filter(s => s && !['OFF', 'OFFICE', 'TRAINING', 'OTHER_STORE', 'REWARD'].includes(s)).length;
 
           if (coreWorking === 0) {
@@ -1150,13 +1266,12 @@
       };
 
       const exportToCsv = () => {
-        const headers = ['スタッフ名', '区分', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '他店舗', '事務局', '社内', '褒賞', '休み'];
+        const headers = ['スタッフ名', '区分', 'エリア', '所属', ...daysList.map(d => `${d.day}日(${d.dayOfWeek})`), '出勤日数', '早番', '中番', '遅番', '他店舗', '事務局', '社内', '褒賞', '休み'];
         const rows = members.map(m => {
           const memberShifts = currentShifts[m.id] || {};
           const roleLabel = m.role === 'sub' ? 'サブ' : '常勤';
-          const daysData = daysList.map(d => SHIFT_TYPES[memberShifts[d.day]]?.label || '休み');
+          const daysData = daysList.map(d => formatShiftForSheet(memberShifts[d.day]));
           
-          // CSVの集計でも褒賞(REWARD)を出勤日数から除外
           const workCount = Object.values(memberShifts).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
           const earlyCount = Object.values(memberShifts).filter(s => s === 'EARLY').length;
           const middleCount = Object.values(memberShifts).filter(s => s === 'MIDDLE').length;
@@ -1167,7 +1282,7 @@
           const rewardCount = Object.values(memberShifts).filter(s => s === 'REWARD').length;
           const offCount = Object.values(memberShifts).filter(s => s === 'OFF' || !s).length;
           
-          return [m.name, roleLabel, ...daysData, workCount, earlyCount, middleCount, lateCount, otherStoreCount, officeCount, trainingCount, rewardCount, offCount];
+          return [m.name, roleLabel, m.area || '', m.affiliation || '', ...daysData, workCount, earlyCount, middleCount, lateCount, otherStoreCount, officeCount, trainingCount, rewardCount, offCount];
         });
 
         const csvContent = '\uFEFF' + [headers, ...rows].map(e => e.map(cell => `"${cell}"`).join(',')).join('\n');
@@ -1235,9 +1350,18 @@ ${JSON.stringify(summaryData, null, 2)}
       const handleAddMember = () => {
         if (!newMemberName.trim()) return;
         const newId = 'm_' + Date.now();
-        updateMembers([...members, { id: newId, name: newMemberName.trim(), role: newMemberRole }]);
+        updateMembers([
+          ...members,
+          {
+            id: newId,
+            name: newMemberName.trim(),
+            role: newMemberRole,
+            area: newMemberArea.trim() || '横浜',
+            affiliation: newMemberAffiliation.trim()
+          }
+        ]);
         setNewMemberName('');
-        showToast(`${newMemberName.trim()} さん（${newMemberRole === 'sub' ? 'サブ' : '常勤'}）を追加しました`);
+        showToast(`${newMemberName.trim()} さんを追加しました`);
       };
 
       const handleDeleteMember = (id, name) => {
@@ -1249,12 +1373,16 @@ ${JSON.stringify(summaryData, null, 2)}
         showToast(`${name} を削除しました`);
       };
 
-      const handleUpdateMemberName = (id) => {
+      const handleUpdateMemberInfo = (id) => {
         if (!editingMemberName.trim()) return;
-        updateMembers(members.map(m => m.id === id ? { ...m, name: editingMemberName.trim() } : m));
+        updateMembers(members.map(m => m.id === id ? {
+          ...m,
+          name: editingMemberName.trim(),
+          area: editingMemberArea.trim(),
+          affiliation: editingMemberAffiliation.trim()
+        } : m));
         setEditingMemberId(null);
-        setEditingMemberName('');
-        showToast('スタッフ名を更新しました');
+        showToast('スタッフ情報を更新しました');
       };
 
       const handleToggleMemberRole = (id) => {
@@ -1286,11 +1414,11 @@ ${JSON.stringify(summaryData, null, 2)}
             <div className="flex items-center space-x-2">
               <Filter className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
               <span className="text-xs font-extrabold text-slate-700 dark:text-slate-200">
-                スタッフ表示 ＆ 自動生成の対象選択 ({selectedMemberIds.length}/{members.length}名)
+                スタッフ表示 ＆ コピー・自動生成の対象選択 ({selectedMemberIds.length}/{members.length}名)
               </span>
               {showAutoGenHint && (
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 hidden md:inline">
-                  ※ここでONにしたスタッフだけで「AI自動シフト生成」を行い、残りのスタッフを手動補填できます
+                  ※ここでONにしたスタッフ順で「スプシ一括コピー」および「AI自動シフト生成」が行われます
                 </span>
               )}
             </div>
@@ -1374,7 +1502,7 @@ ${JSON.stringify(summaryData, null, 2)}
                       {deviceLabel}最適化
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">6連勤禁止・早い出勤回避・常勤/サブ管理・選択自動シフト生成</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">6連勤禁止・早い出勤回避・2種のスプレッドシート直接コピペ対応</p>
                 </div>
               </div>
 
@@ -1475,12 +1603,23 @@ ${JSON.stringify(summaryData, null, 2)}
                   </span>
                 </button>
 
+                {/* ワンタップ：シフト枠のみ即コピー（両シート共通） */}
                 <button
-                  onClick={exportToCsv}
-                  className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors border border-slate-200 dark:border-slate-700"
-                  title="CSV出力"
+                  onClick={() => copyShiftCellsOnly(displayedMembers)}
+                  className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl font-bold text-xs shadow-sm active:scale-95 transition-all"
+                  title="選択中スタッフの1日〜末日のシフト枠をコピー（休みは空欄）"
                 >
-                  <Download className="w-4 h-4" />
+                  <Copy className="w-4 h-4" />
+                  <span>シフト枠コピー ({displayedMembers.length}名)</span>
+                </button>
+
+                {/* スプレッドシート貼り付けメニュー（2つのシート対応詳細） */}
+                <button
+                  onClick={() => setIsCopyModalOpen(true)}
+                  className="flex items-center space-x-1 bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white px-3 py-1.5 rounded-xl font-bold text-xs shadow-sm transition-all"
+                  title="各店管理用・横浜共有用スプレッドシート向けの詳細コピーメニュー"
+                >
+                  <span>スプシ貼付メニュー</span>
                 </button>
 
                 <button
@@ -1626,9 +1765,12 @@ ${JSON.stringify(summaryData, null, 2)}
                       <thead>
                         <tr className="bg-slate-100 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                           <th className={`sticky left-0 z-30 bg-slate-100 dark:bg-slate-900 font-extrabold text-slate-700 dark:text-slate-200 border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
-                            isCompact ? 'w-[105px] p-1.5 text-[11px]' : 'min-w-[140px] p-2.5'
+                            isCompact ? 'w-[125px] p-1.5 text-[11px]' : 'min-w-[165px] p-2.5'
                           }`}>
-                            スタッフ名
+                            <div className="flex items-center justify-between">
+                              <span>スタッフ名</span>
+                              <span className="text-[9px] font-normal text-slate-400">1行コピー</span>
+                            </div>
                           </th>
                           {daysList.map(d => (
                             <th
@@ -1660,7 +1802,6 @@ ${JSON.stringify(summaryData, null, 2)}
                           const memberShifts = currentShifts[m.id] || {};
                           const memberWishes = currentWishes[m.id] || {};
                           
-                          // 出勤日数からOFFおよびREWARD(褒賞)を除外してカウント
                           const actualWorkDays = Object.values(memberShifts).filter(s => s && s !== 'OFF' && s !== 'REWARD').length;
                           const isSub = m.role === 'sub';
                           const isMatchRequired = actualWorkDays === requiredWorkDays;
@@ -1668,17 +1809,26 @@ ${JSON.stringify(summaryData, null, 2)}
                           return (
                             <tr key={m.id} className="group hover:bg-slate-50/80 dark:hover:bg-slate-700/30 transition-colors">
                               <td className={`sticky left-0 z-20 bg-white dark:bg-slate-800 group-hover:bg-slate-50 dark:group-hover:bg-slate-800 font-extrabold text-slate-800 dark:text-slate-100 border-r border-slate-300 dark:border-slate-700 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
-                                isCompact ? 'p-1.5 text-[11px]' : 'p-2.5'
+                                isCompact ? 'p-1 text-[11px]' : 'p-2'
                               }`}>
                                 <div className="flex items-center justify-between gap-1">
-                                  <span className="truncate">{m.name}</span>
-                                  <span className={`shrink-0 text-[9px] px-1 py-0.2 rounded font-extrabold ${
-                                    isSub
-                                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
-                                      : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                                  }`}>
-                                    {isSub ? 'サブ' : '常勤'}
-                                  </span>
+                                  <div className="flex items-center space-x-1 min-w-0">
+                                    <span className="truncate">{m.name}</span>
+                                    <span className={`shrink-0 text-[9px] px-1 py-0.2 rounded font-extrabold ${
+                                      isSub
+                                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                                        : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                    }`}>
+                                      {isSub ? 'サブ' : '常勤'}
+                                    </span>
+                                  </div>
+                                  <button
+                                    onClick={() => copySingleMemberRow(m)}
+                                    className="shrink-0 p-1 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/60 transition-colors"
+                                    title={`${m.name}のシフト1行（1日〜${daysInMonth}日）をコピー`}
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </button>
                                 </div>
                               </td>
                               {daysList.map(d => {
@@ -1759,7 +1909,6 @@ ${JSON.stringify(summaryData, null, 2)}
                           </td>
                           {daysList.map(d => {
                             const dayShifts = members.map(m => currentShifts[m.id]?.[d.day]);
-                            // 店舗出勤計からOFF, OFFICE, TRAINING, OTHER_STORE, REWARD を除外
                             const coreShifts = dayShifts.filter(s => s && !['OFF', 'OFFICE', 'TRAINING', 'OTHER_STORE', 'REWARD'].includes(s));
                             const coreCount = coreShifts.length;
                             
@@ -1877,7 +2026,7 @@ ${JSON.stringify(summaryData, null, 2)}
                     <div className="md:col-span-2 flex items-center space-x-2">
                       <input
                         type="text"
-                        placeholder="例: 佐藤さんは10日休み、田中さんは土日早番、鈴木さんは20日他店舗"
+                        placeholder="例: 稲川さんは10日休み、吉田さんは土日早番、原田さんは1,8休 7早"
                         value={textWishInput}
                         onChange={(e) => setTextWishInput(e.target.value)}
                         className="flex-1 p-2.5 text-xs bg-slate-900 border border-slate-600 text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -1965,7 +2114,7 @@ ${JSON.stringify(summaryData, null, 2)}
                             </span>
                           </div>
                           <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
-                            希望指定: {wishCount}件
+                            希望指定: {wishCount}件 ({formatWishNoteForMember(m.id)})
                           </span>
                         </div>
 
@@ -2137,11 +2286,25 @@ ${JSON.stringify(summaryData, null, 2)}
             {activeTab === 'members' && (
               <div className="space-y-4">
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
-                  <div>
-                    <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
-                      <Settings className="w-5 h-5 text-emerald-600" />
-                      <span>スタッフ管理（常勤・サブ設定 / 並び替え / 追加・削除）</span>
-                    </h2>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-base font-extrabold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
+                        <Settings className="w-5 h-5 text-emerald-600" />
+                        <span>スタッフ管理（常勤・サブ設定 / エリア・所属 / 並び替え）</span>
+                      </h2>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        スプレッドシートの並び順に合わせて上下矢印で順番を揃えておくと、一括コピペがそのまま行通りに貼り付けられます。
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        updateMembers(INITIAL_MEMBERS);
+                        showToast('横浜店メンバー構成（9名）をセットしました');
+                      }}
+                      className="px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-100 transition-colors"
+                    >
+                      横浜店メンバー構成をプリセット読込
+                    </button>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 pt-2">
@@ -2150,7 +2313,21 @@ ${JSON.stringify(summaryData, null, 2)}
                       placeholder="新しいスタッフ名..."
                       value={newMemberName}
                       onChange={(e) => setNewMemberName(e.target.value)}
-                      className="flex-1 min-w-[180px] p-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      className="flex-1 min-w-[150px] p-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <input
+                      type="text"
+                      placeholder="エリア (例: 横浜 / 事務局)"
+                      value={newMemberArea}
+                      onChange={(e) => setNewMemberArea(e.target.value)}
+                      className="w-36 p-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <input
+                      type="text"
+                      placeholder="所属 (例: Function / SCF)"
+                      value={newMemberAffiliation}
+                      onChange={(e) => setNewMemberAffiliation(e.target.value)}
+                      className="w-40 p-2 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
                     <div className="flex items-center bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold">
                       <button
@@ -2191,22 +2368,37 @@ ${JSON.stringify(summaryData, null, 2)}
                       return (
                         <div key={m.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-700">
                           {editingMemberId === m.id ? (
-                            <div className="flex items-center space-x-2 flex-1 mr-2">
+                            <div className="flex flex-wrap items-center gap-2 flex-1 mr-2">
                               <input
                                 type="text"
                                 value={editingMemberName}
                                 onChange={(e) => setEditingMemberName(e.target.value)}
-                                className="p-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 rounded-lg flex-1"
+                                placeholder="氏名"
+                                className="p-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 rounded-lg min-w-[130px]"
+                              />
+                              <input
+                                type="text"
+                                value={editingMemberArea}
+                                onChange={(e) => setEditingMemberArea(e.target.value)}
+                                placeholder="エリア (横浜/事務局など)"
+                                className="p-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 rounded-lg w-32"
+                              />
+                              <input
+                                type="text"
+                                value={editingMemberAffiliation}
+                                onChange={(e) => setEditingMemberAffiliation(e.target.value)}
+                                placeholder="所属 (Function/SCFなど)"
+                                className="p-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 rounded-lg w-36"
                               />
                               <button
-                                onClick={() => handleUpdateMemberName(m.id)}
+                                onClick={() => handleUpdateMemberInfo(m.id)}
                                 className="p-1.5 bg-emerald-600 text-white rounded-lg text-xs"
                               >
                                 <Check className="w-4 h-4" />
                               </button>
                             </div>
                           ) : (
-                            <div className="flex items-center space-x-3">
+                            <div className="flex flex-wrap items-center gap-2">
                               <button
                                 onClick={() => handleToggleMemberRole(m.id)}
                                 className={`px-2.5 py-1 rounded-lg text-xs font-extrabold border transition-all hover:scale-105 ${
@@ -2219,6 +2411,16 @@ ${JSON.stringify(summaryData, null, 2)}
                                 {isSub ? 'サブ (日数制限なし)' : '常勤 (必須日数対象)'}
                               </button>
                               <span className="font-bold text-xs text-slate-800 dark:text-slate-200">{m.name}</span>
+                              {m.area && (
+                                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold">
+                                  エリア: {m.area}
+                                </span>
+                              )}
+                              {m.affiliation && (
+                                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold">
+                                  所属: {m.affiliation}
+                                </span>
+                              )}
                             </div>
                           )}
 
@@ -2246,9 +2448,11 @@ ${JSON.stringify(summaryData, null, 2)}
                               onClick={() => {
                                 setEditingMemberId(m.id);
                                 setEditingMemberName(m.name);
+                                setEditingMemberArea(m.area || '');
+                                setEditingMemberAffiliation(m.affiliation || '');
                               }}
                               className="p-1.5 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg"
-                              title="名前を編集"
+                              title="情報を編集"
                             >
                               <Edit3 className="w-4 h-4" />
                             </button>
@@ -2270,7 +2474,137 @@ ${JSON.stringify(summaryData, null, 2)}
 
           </main>
 
-          {/* モーダル群 */}
+          {/* スプレッドシート貼り付け用コピーモーダル */}
+          {isCopyModalOpen && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 max-w-lg w-full border border-slate-200 dark:border-slate-700 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-700 pb-3">
+                  <div className="flex items-center space-x-2">
+                    <div className="p-2 bg-emerald-600 rounded-xl text-white">
+                      <Copy className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-100">
+                        スプレッドシート コピペ出力メニュー
+                      </h3>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        現在フィルターで選択中のスタッフ（{displayedMembers.length}名）を上から順に出力します
+                      </p>
+                    </div>
+                  </div>
+                  <button onClick={() => setIsCopyModalOpen(false)} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {/* 1. 両シート共通メインコピー */}
+                  <div className="p-3.5 rounded-xl border-2 border-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/30 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-emerald-800 dark:text-emerald-300">
+                        ① 【両シート共通】シフト枠のみ一括コピー（1日〜{daysInMonth}日）
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-600 text-white font-bold">一番おすすめ</span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                      「休み」を空欄にした 1日〜{daysInMonth}日 のシフト枠だけをコピーします。<br />
+                      ・<b>【Google Pixel Corner】シフト表</b>：1人目の1日のセル（例: <code>J23</code>）に貼付<br />
+                      ・<b>【横浜共有用】シフト表</b>：1人目の1日のセル（例: <code>C9</code>）に貼付<br />
+                      ※E〜H列の稼働数カウント関数や既存の表枠を一切壊さずに両方へ貼れます。
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        onClick={() => {
+                          copyShiftCellsOnly(displayedMembers);
+                          setIsCopyModalOpen(false);
+                        }}
+                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-3 rounded-xl font-extrabold text-xs flex items-center justify-center space-x-1.5 shadow-sm transition-all"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>表示中の {displayedMembers.length}名分 をコピー</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          const regulars = members.filter(m => (m.role || 'regular') === 'regular');
+                          copyShiftCellsOnly(regulars);
+                          setIsCopyModalOpen(false);
+                        }}
+                        className="bg-white dark:bg-slate-800 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 py-2 px-3 rounded-xl font-extrabold text-xs transition-all"
+                      >
+                        常勤のみ ({members.filter(m => (m.role || 'regular') === 'regular').length}名) コピー
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. 各店管理用シート向け補助 */}
+                  <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 space-y-2">
+                    <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 block">
+                      ② 【各店管理用】I列「シフト希望備考欄」のみ縦コピー
+                    </span>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      登録された希望シフトから「<code>1,8休 7早</code>」「<code>なし</code>」等を自動作成し、各店管理用シートの <code>I23</code> セルから縦に一括貼り付けできます。
+                    </p>
+                    <button
+                      onClick={() => {
+                        copyWishNotesColumn();
+                        setIsCopyModalOpen(false);
+                      }}
+                      className="w-full bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center space-x-1.5 transition-all"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>I列（シフト希望備考欄・{displayedMembers.length}名分）をコピー</span>
+                    </button>
+                  </div>
+
+                  {/* 3. 横浜共有用シート向け補助 */}
+                  <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 space-y-2">
+                    <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 block">
+                      ③ 【横浜共有用】A列（氏名）＋ B列（エリア）＋ シフト一括コピー
+                    </span>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      新規シート作成時など、<code>A9</code> セルから氏名・エリア（横浜/関東/事務局）・シフトをまとめて貼り付けたい場合に使えます。
+                    </p>
+                    <button
+                      onClick={() => {
+                        copyForSharedStoreSheet();
+                        setIsCopyModalOpen(false);
+                      }}
+                      className="w-full bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center space-x-1.5 transition-all"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>氏名＋エリア＋シフト（{displayedMembers.length}名分）をコピー</span>
+                    </button>
+                  </div>
+
+                  {/* 4. 日付・曜日ヘッダー & CSV保存 */}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      onClick={() => {
+                        copyDateHeadersForSheet();
+                        setIsCopyModalOpen(false);
+                      }}
+                      className="p-2.5 rounded-xl border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center space-x-1.5 transition-all"
+                    >
+                      <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>日付・曜日ヘッダー(2行)コピー</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        exportToCsv();
+                        setIsCopyModalOpen(false);
+                      }}
+                      className="p-2.5 rounded-xl border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center space-x-1.5 transition-all"
+                    >
+                      <Download className="w-3.5 h-3.5 text-slate-500" />
+                      <span>従来のCSVファイル保存</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* セルクリック時のシフト直接編集モーダル */}
           {selectedCell && (
             <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 max-w-xs w-full border border-slate-200 dark:border-slate-700 shadow-xl space-y-4">
